@@ -9,6 +9,7 @@ constexpr uint8_t SDA_PIN = D2; // GPIO4
 constexpr uint8_t SCL_PIN = D1; // GPIO5
 constexpr uint32_t SERIAL_BAUD = 115200;
 constexpr uint32_t SAMPLE_INTERVAL_MS = 20; // 50 Hz
+constexpr uint16_t SAMPLES_PER_BATCH = 50;
 constexpr bool ENABLE_STARTUP_I2C_SCAN = true;
 constexpr uint32_t WIFI_RETRY_INTERVAL_MS = 10000;
 
@@ -33,8 +34,17 @@ struct ImuReading {
   float gz_dps;
 };
 
+struct BatchSample {
+  uint32_t dt_ms;
+  ImuReading reading;
+};
+
+BatchSample batch_samples[SAMPLES_PER_BATCH];
 uint32_t next_sample_ms = 0;
 uint32_t next_wifi_retry_ms = 0;
+uint32_t batch_device_ms_start = 0;
+uint32_t batch_sequence = 0;
+uint16_t batch_sample_count = 0;
 bool imu_ready = false;
 bool wifi_begin_called = false;
 
@@ -226,31 +236,34 @@ bool readImu(ImuReading &reading) {
   return true;
 }
 
-void printCsvHeader() {
-  Serial.println("device_ms,ax_g,ay_g,az_g,gx_dps,gy_dps,gz_dps,accel_mag_g");
+void resetBatch(uint32_t next_start_ms) {
+  batch_device_ms_start = next_start_ms;
+  batch_sample_count = 0;
 }
 
-void printReading(uint32_t device_ms, const ImuReading &reading) {
-  const float accel_mag_g = sqrtf(
-      reading.ax_g * reading.ax_g +
-      reading.ay_g * reading.ay_g +
-      reading.az_g * reading.az_g);
+void appendSampleToBatch(uint32_t sample_ms, const ImuReading &reading) {
+  if (batch_sample_count == 0) {
+    batch_device_ms_start = sample_ms;
+  }
 
-  Serial.print(device_ms);
-  Serial.print(',');
-  Serial.print(reading.ax_g, 4);
-  Serial.print(',');
-  Serial.print(reading.ay_g, 4);
-  Serial.print(',');
-  Serial.print(reading.az_g, 4);
-  Serial.print(',');
-  Serial.print(reading.gx_dps, 3);
-  Serial.print(',');
-  Serial.print(reading.gy_dps, 3);
-  Serial.print(',');
-  Serial.print(reading.gz_dps, 3);
-  Serial.print(',');
-  Serial.println(accel_mag_g, 4);
+  batch_samples[batch_sample_count] = BatchSample{
+      sample_ms - batch_device_ms_start,
+      reading,
+  };
+  batch_sample_count++;
+}
+
+bool isBatchReady() {
+  return batch_sample_count >= SAMPLES_PER_BATCH;
+}
+
+void printBatchPrepared() {
+  Serial.print("Batch prepared: sequence=");
+  Serial.print(batch_sequence);
+  Serial.print(", samples=");
+  Serial.print(batch_sample_count);
+  Serial.print(", device_ms_start=");
+  Serial.println(batch_device_ms_start);
 }
 } // namespace
 
@@ -281,12 +294,13 @@ void setup() {
 
   imu_ready = initializeMpu6050();
   if (imu_ready) {
-    printCsvHeader();
+    Serial.println("IMU ready. Preparing 50-sample batches at 50 Hz.");
   } else {
     Serial.println("IMU is not ready. Firmware will retry initialization every second.");
   }
 
   next_sample_ms = millis();
+  resetBatch(next_sample_ms);
 }
 
 void loop() {
@@ -298,8 +312,9 @@ void loop() {
     if (static_cast<int32_t>(now_ms - next_retry_ms) >= 0) {
       imu_ready = initializeMpu6050();
       if (imu_ready) {
-        printCsvHeader();
+        Serial.println("IMU ready. Preparing 50-sample batches at 50 Hz.");
         next_sample_ms = millis();
+        resetBatch(next_sample_ms);
       }
       next_retry_ms = now_ms + 1000;
     }
@@ -309,7 +324,12 @@ void loop() {
   if (static_cast<int32_t>(now_ms - next_sample_ms) >= 0) {
     ImuReading reading = {};
     if (readImu(reading)) {
-      printReading(now_ms, reading);
+      appendSampleToBatch(now_ms, reading);
+      if (isBatchReady()) {
+        printBatchPrepared();
+        batch_sequence++;
+        resetBatch(now_ms + SAMPLE_INTERVAL_MS);
+      }
     } else {
       Serial.println("IMU read failed. Will retry initialization.");
       imu_ready = false;
