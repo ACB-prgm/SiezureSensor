@@ -1,5 +1,8 @@
 #include <Arduino.h>
+#include <ArduinoJson.h>
+#include <ESP8266HTTPClient.h>
 #include <ESP8266WiFi.h>
+#include <WiFiClient.h>
 #include <Wire.h>
 
 #include "config.h"
@@ -12,6 +15,7 @@ constexpr uint32_t SAMPLE_INTERVAL_MS = 20; // 50 Hz
 constexpr uint16_t SAMPLES_PER_BATCH = 50;
 constexpr bool ENABLE_STARTUP_I2C_SCAN = true;
 constexpr uint32_t WIFI_RETRY_INTERVAL_MS = 10000;
+constexpr uint32_t HTTP_TIMEOUT_MS = 5000;
 
 constexpr uint8_t MPU6050_ADDRESS = 0x68;
 constexpr uint8_t MPU6050_REG_SMPLRT_DIV = 0x19;
@@ -265,6 +269,81 @@ void printBatchPrepared() {
   Serial.print(", device_ms_start=");
   Serial.println(batch_device_ms_start);
 }
+
+String uploadUrl() {
+  String base_url = SERVER_URL;
+  if (base_url.endsWith("/")) {
+    base_url.remove(base_url.length() - 1);
+  }
+  return base_url + "/api/v1/imu/batch";
+}
+
+String buildBatchJson(uint32_t sequence) {
+  JsonDocument doc;
+  doc["device_id"] = DEVICE_ID;
+  doc["firmware_version"] = FIRMWARE_VERSION;
+  doc["session_id"] = SESSION_ID;
+  doc["sequence"] = sequence;
+  doc["sample_hz"] = 50;
+  doc["device_ms_start"] = batch_device_ms_start;
+  doc["battery_mv"] = nullptr;
+
+  JsonArray samples = doc["samples"].to<JsonArray>();
+  for (uint16_t i = 0; i < batch_sample_count; i++) {
+    JsonObject sample = samples.add<JsonObject>();
+    sample["dt_ms"] = batch_samples[i].dt_ms;
+    sample["ax"] = batch_samples[i].reading.ax_g;
+    sample["ay"] = batch_samples[i].reading.ay_g;
+    sample["az"] = batch_samples[i].reading.az_g;
+    sample["gx"] = batch_samples[i].reading.gx_dps;
+    sample["gy"] = batch_samples[i].reading.gy_dps;
+    sample["gz"] = batch_samples[i].reading.gz_dps;
+  }
+
+  String payload;
+  serializeJson(doc, payload);
+  return payload;
+}
+
+void uploadBatch(uint32_t sequence) {
+  if (!isWiFiConnected()) {
+    Serial.println("Skipping upload: Wi-Fi is not connected.");
+    return;
+  }
+
+  const String url = uploadUrl();
+  const String payload = buildBatchJson(sequence);
+  WiFiClient client;
+  HTTPClient http;
+
+  Serial.print("Uploading batch sequence=");
+  Serial.print(sequence);
+  Serial.print(", bytes=");
+  Serial.print(payload.length());
+  Serial.print(", url=");
+  Serial.println(url);
+
+  http.setTimeout(HTTP_TIMEOUT_MS);
+  if (!http.begin(client, url)) {
+    Serial.println("HTTP begin failed; dropping batch.");
+    return;
+  }
+
+  http.addHeader("Content-Type", "application/json");
+  const int status_code = http.POST(payload);
+  Serial.print("Upload HTTP status: ");
+  Serial.println(status_code);
+
+  if (status_code > 0) {
+    Serial.print("Upload response: ");
+    Serial.println(http.getString());
+  } else {
+    Serial.print("Upload failed: ");
+    Serial.println(http.errorToString(status_code));
+  }
+
+  http.end();
+}
 } // namespace
 
 void setup() {
@@ -326,9 +405,14 @@ void loop() {
     if (readImu(reading)) {
       appendSampleToBatch(now_ms, reading);
       if (isBatchReady()) {
+        const uint32_t prepared_sequence = batch_sequence;
         printBatchPrepared();
+        uploadBatch(prepared_sequence);
         batch_sequence++;
-        resetBatch(now_ms + SAMPLE_INTERVAL_MS);
+        const uint32_t resume_ms = millis() + SAMPLE_INTERVAL_MS;
+        next_sample_ms = resume_ms;
+        resetBatch(resume_ms);
+        return;
       }
     } else {
       Serial.println("IMU read failed. Will retry initialization.");
