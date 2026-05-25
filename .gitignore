@@ -5,6 +5,7 @@ __pycache__/
 venv/
 .venv-platformio/
 .platformio-core/
+firmware/esp8266_mpu6050_logger/include/config.h
 data/*
 !data/.gitkeep
 *.sqlite
