@@ -1,5 +1,8 @@
 #include <Arduino.h>
+#include <ESP8266WiFi.h>
 #include <Wire.h>
+
+#include "config.h"
 
 namespace {
 constexpr uint8_t SDA_PIN = D2; // GPIO4
@@ -7,6 +10,7 @@ constexpr uint8_t SCL_PIN = D1; // GPIO5
 constexpr uint32_t SERIAL_BAUD = 115200;
 constexpr uint32_t SAMPLE_INTERVAL_MS = 20; // 50 Hz
 constexpr bool ENABLE_STARTUP_I2C_SCAN = true;
+constexpr uint32_t WIFI_RETRY_INTERVAL_MS = 10000;
 
 constexpr uint8_t MPU6050_ADDRESS = 0x68;
 constexpr uint8_t MPU6050_REG_SMPLRT_DIV = 0x19;
@@ -30,7 +34,9 @@ struct ImuReading {
 };
 
 uint32_t next_sample_ms = 0;
+uint32_t next_wifi_retry_ms = 0;
 bool imu_ready = false;
+bool wifi_begin_called = false;
 
 void printAddress(uint8_t address) {
   Serial.print("0x");
@@ -38,6 +44,55 @@ void printAddress(uint8_t address) {
     Serial.print("0");
   }
   Serial.print(address, HEX);
+}
+
+bool isWiFiConnected() {
+  return WiFi.status() == WL_CONNECTED;
+}
+
+void printWiFiStatus() {
+  Serial.print("Wi-Fi status: ");
+  Serial.print(WiFi.status());
+  if (isWiFiConnected()) {
+    Serial.print(", IP: ");
+    Serial.print(WiFi.localIP());
+  }
+  Serial.println();
+}
+
+void startWiFiConnect() {
+  if (isWiFiConnected()) {
+    return;
+  }
+
+  Serial.print("Connecting to Wi-Fi SSID: ");
+  Serial.println(WIFI_SSID);
+
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  wifi_begin_called = true;
+}
+
+void maintainWiFi(uint32_t now_ms) {
+  if (isWiFiConnected()) {
+    static bool printed_connected = false;
+    if (!printed_connected) {
+      Serial.print("Wi-Fi connected. Local IP: ");
+      Serial.println(WiFi.localIP());
+      printed_connected = true;
+    }
+    return;
+  }
+
+  if (static_cast<int32_t>(now_ms - next_wifi_retry_ms) >= 0) {
+    if (wifi_begin_called) {
+      Serial.println("Wi-Fi not connected; retrying without blocking sampling.");
+      printWiFiStatus();
+      WiFi.disconnect();
+    }
+    startWiFiConnect();
+    next_wifi_retry_ms = now_ms + WIFI_RETRY_INTERVAL_MS;
+  }
 }
 
 void scanI2CBus() {
@@ -207,9 +262,18 @@ void setup() {
   Serial.println("Dog Seizure Sensor V0 - ESP8266 MPU-6050 bench read");
   Serial.println("Expected MPU-6050 address: 0x68");
   Serial.println("Wiring: SDA=D2/GPIO4, SCL=D1/GPIO5, VCC=3V3, GND=GND");
+  Serial.print("Device ID: ");
+  Serial.println(DEVICE_ID);
+  Serial.print("Session ID: ");
+  Serial.println(SESSION_ID);
+  Serial.print("Server URL: ");
+  Serial.println(SERVER_URL);
 
   Wire.begin(SDA_PIN, SCL_PIN);
   Wire.setClock(400000);
+
+  startWiFiConnect();
+  next_wifi_retry_ms = millis() + WIFI_RETRY_INTERVAL_MS;
 
   if (ENABLE_STARTUP_I2C_SCAN) {
     scanI2CBus();
@@ -227,6 +291,7 @@ void setup() {
 
 void loop() {
   const uint32_t now_ms = millis();
+  maintainWiFi(now_ms);
 
   if (!imu_ready) {
     static uint32_t next_retry_ms = 0;
