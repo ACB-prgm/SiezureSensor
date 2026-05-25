@@ -1,0 +1,15 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+venv/
+.venv-platformio/
+.platformio-core/
+data/*
+!data/.gitkeep
+*.sqlite
+*.db
+.pio/
+.DS_Store
+.ipynb_checkpoints/
+.pytest_cache/

@@ -1,0 +1,596 @@
+{
+  "project": "dog-seizure-sensor-v0",
+  "schema_version": 1,
+  "source_of_truth": "dog-seizure-sensor-v0-DEVELOPMENT_PLAN.md",
+  "objective": "Build a V0 data acquisition and labeling system for dog seizure sensor IMU data.",
+  "scope": {
+    "in_scope": [
+      "ESP8266 and MPU-6050 raw IMU acquisition",
+      "Wi-Fi batch upload",
+      "FastAPI ingestion server",
+      "SQLite storage",
+      "Manual event labeling",
+      "CSV export",
+      "Basic plotting and data-quality review"
+    ],
+    "out_of_scope": [
+      "on-device seizure detection",
+      "machine learning model training",
+      "real-time alerting",
+      "BLE",
+      "battery-life optimization",
+      "waterproof enclosure",
+      "mobile app"
+    ]
+  },
+  "implementation_rules": [
+    "Use device-relative milliseconds as the source of truth for sample and event timing.",
+    "Join labels to samples by session_id and device_ms overlap.",
+    "Write each IMU batch and its samples in one atomic database transaction.",
+    "Return 409 Conflict for duplicate device_id/session_id/sequence batches.",
+    "Do not commit private config, local databases, or real sensor data.",
+    "Do not implement seizure detection or medical alerting in V0."
+  ],
+  "milestones": [
+    {
+      "id": "M0",
+      "name": "Repository Bootstrap",
+      "tasks": [
+        {
+          "id": "M0.1",
+          "title": "Create repo structure",
+          "dependencies": [],
+          "deliverables": [
+            "firmware/esp8266_mpu6050_logger/",
+            "server/app/",
+            "server/tests/",
+            "analysis/scripts/",
+            "analysis/notebooks/",
+            "docs/",
+            "data/.gitkeep"
+          ],
+          "acceptance_criteria": [
+            "Required folders and placeholder files exist.",
+            "data/ is present without tracking real data files."
+          ],
+          "plan_ref": "M0 - Task M0.1"
+        },
+        {
+          "id": "M0.2",
+          "title": "Add root gitignore",
+          "dependencies": [
+            "M0.1"
+          ],
+          "deliverables": [
+            ".gitignore"
+          ],
+          "acceptance_criteria": [
+            "Runtime files, databases, private config, PlatformIO build output, and notebook checkpoints are ignored.",
+            "data/.gitkeep remains trackable."
+          ],
+          "plan_ref": "M0 - Task M0.2"
+        },
+        {
+          "id": "M0.3",
+          "title": "Add README",
+          "dependencies": [
+            "M0.1"
+          ],
+          "deliverables": [
+            "README.md"
+          ],
+          "acceptance_criteria": [
+            "README explains objective, hardware, architecture, local setup, firmware setup, server startup, and V0 limitations.",
+            "A developer can run the server from the README instructions."
+          ],
+          "plan_ref": "M0 - Task M0.3"
+        }
+      ]
+    },
+    {
+      "id": "M1",
+      "name": "Server Skeleton",
+      "tasks": [
+        {
+          "id": "M1.1",
+          "title": "Create FastAPI app",
+          "dependencies": [
+            "M0.1"
+          ],
+          "deliverables": [
+            "server/app/main.py",
+            "server/app/routes/health.py"
+          ],
+          "acceptance_criteria": [
+            "uvicorn app.main:app --reload starts successfully from server/.",
+            "GET /health returns 200 with {\"status\":\"ok\"}."
+          ],
+          "plan_ref": "M1 - Task M1.1"
+        },
+        {
+          "id": "M1.2",
+          "title": "Add Python dependencies",
+          "dependencies": [
+            "M1.1"
+          ],
+          "deliverables": [
+            "server/requirements.txt"
+          ],
+          "acceptance_criteria": [
+            "pip install -r requirements.txt works.",
+            "Requirements include FastAPI, Uvicorn, Pydantic, SQLAlchemy, python-dotenv, pandas, matplotlib, pytest, and httpx."
+          ],
+          "plan_ref": "M1 - Task M1.2"
+        },
+        {
+          "id": "M1.3",
+          "title": "Add health endpoint test",
+          "dependencies": [
+            "M1.1",
+            "M1.2"
+          ],
+          "deliverables": [
+            "server/tests/test_health.py"
+          ],
+          "acceptance_criteria": [
+            "pytest passes.",
+            "Health endpoint test verifies {\"status\":\"ok\"}."
+          ],
+          "plan_ref": "M1 - Task M1.3"
+        }
+      ]
+    },
+    {
+      "id": "M2",
+      "name": "Database Layer",
+      "tasks": [
+        {
+          "id": "M2.1",
+          "title": "Implement SQLite connection",
+          "dependencies": [
+            "M1.2"
+          ],
+          "deliverables": [
+            "server/app/database.py"
+          ],
+          "acceptance_criteria": [
+            "Database path is configurable by environment variable.",
+            "Default DB path from server/ is ../data/seizure_sensor_v0.sqlite.",
+            "Database parent directories are created automatically.",
+            "Starting the app creates the SQLite database and tables."
+          ],
+          "plan_ref": "M2 - Task M2.1"
+        },
+        {
+          "id": "M2.2",
+          "title": "Implement SQLAlchemy models",
+          "dependencies": [
+            "M2.1"
+          ],
+          "deliverables": [
+            "server/app/models.py"
+          ],
+          "acceptance_criteria": [
+            "Models exist for Device, Session, Batch, IMUSample, and Event.",
+            "Event model stores session_id, start_device_ms, and end_device_ms.",
+            "Models match the plan schema and create without import cycles."
+          ],
+          "plan_ref": "M2 - Task M2.2"
+        }
+      ]
+    },
+    {
+      "id": "M3",
+      "name": "IMU Batch Upload API",
+      "tasks": [
+        {
+          "id": "M3.1",
+          "title": "Create Pydantic schemas",
+          "dependencies": [
+            "M2.2"
+          ],
+          "deliverables": [
+            "server/app/schemas.py"
+          ],
+          "acceptance_criteria": [
+            "Schemas exist for IMUSampleIn, IMUBatchIn, IMUBatchAck, EventIn, and EventOut.",
+            "Invalid payloads are rejected by FastAPI validation.",
+            "Valid sample payloads parse successfully."
+          ],
+          "plan_ref": "M3 - Task M3.1"
+        },
+        {
+          "id": "M3.2",
+          "title": "Implement IMU upload route",
+          "dependencies": [
+            "M3.1"
+          ],
+          "deliverables": [
+            "server/app/routes/imu.py"
+          ],
+          "acceptance_criteria": [
+            "POST /api/v1/imu/batch validates request bodies.",
+            "Valid payload writes one batch row and N sample rows.",
+            "device_ms is stored as device_ms_start plus sample dt_ms.",
+            "raw_payload_json preserves the original batch payload.",
+            "Batch metadata and samples are committed atomically.",
+            "Duplicate device_id/session_id/sequence returns 409 without duplicate samples."
+          ],
+          "plan_ref": "M3 - Task M3.2"
+        },
+        {
+          "id": "M3.3",
+          "title": "Add IMU upload tests",
+          "dependencies": [
+            "M3.2"
+          ],
+          "deliverables": [
+            "server/tests/test_imu_upload.py"
+          ],
+          "acceptance_criteria": [
+            "Valid batch returns 200.",
+            "Empty samples are rejected.",
+            "Missing required fields are rejected.",
+            "Duplicate sequence returns 409.",
+            "Stored sample count equals payload sample count."
+          ],
+          "plan_ref": "M3 - Task M3.3"
+        }
+      ]
+    },
+    {
+      "id": "M4",
+      "name": "Manual Event Labeling API",
+      "tasks": [
+        {
+          "id": "M4.1",
+          "title": "Implement event routes",
+          "dependencies": [
+            "M3.1"
+          ],
+          "deliverables": [
+            "server/app/routes/events.py"
+          ],
+          "acceptance_criteria": [
+            "POST /api/v1/events creates manual labels.",
+            "GET /api/v1/events lists labels.",
+            "GET /api/v1/events/{event_id} returns one label.",
+            "Event payloads include session_id, start_device_ms, and end_device_ms.",
+            "Event type is restricted to the V0 allowed set.",
+            "start_device_ms must be less than end_device_ms.",
+            "Severity is null or an integer from 1 through 5."
+          ],
+          "plan_ref": "M4 - Task M4.1"
+        },
+        {
+          "id": "M4.2",
+          "title": "Add event tests",
+          "dependencies": [
+            "M4.1"
+          ],
+          "deliverables": [
+            "server/tests/test_events.py"
+          ],
+          "acceptance_criteria": [
+            "Valid event creation succeeds.",
+            "Invalid event type is rejected.",
+            "End before start is rejected.",
+            "Event listing returns created events."
+          ],
+          "plan_ref": "M4 - Task M4.2"
+        }
+      ]
+    },
+    {
+      "id": "M5",
+      "name": "Export API",
+      "tasks": [
+        {
+          "id": "M5.1",
+          "title": "Implement sample export endpoint",
+          "dependencies": [
+            "M3.3"
+          ],
+          "deliverables": [
+            "server/app/routes/export.py"
+          ],
+          "acceptance_criteria": [
+            "GET /api/v1/export/samples returns CSV.",
+            "CSV includes accel_mag and gyro_mag.",
+            "Filtering by session_id works.",
+            "Optional start/end filters operate on device_ms or clearly documented timing inputs."
+          ],
+          "plan_ref": "M5 - Task M5.1"
+        },
+        {
+          "id": "M5.2",
+          "title": "Add labeled export script",
+          "dependencies": [
+            "M4.2",
+            "M5.1"
+          ],
+          "deliverables": [
+            "analysis/scripts/export_session.py"
+          ],
+          "acceptance_criteria": [
+            "Script exports a session from the command line.",
+            "Optional label join uses session_id and device_ms overlap.",
+            "Output writes to data/exports/ and opens correctly in pandas."
+          ],
+          "plan_ref": "M5 - Task M5.2"
+        }
+      ]
+    },
+    {
+      "id": "M6",
+      "name": "Analysis Utilities",
+      "tasks": [
+        {
+          "id": "M6.1",
+          "title": "Create session plotting script",
+          "dependencies": [
+            "M5.2"
+          ],
+          "deliverables": [
+            "analysis/scripts/plot_session.py"
+          ],
+          "acceptance_criteria": [
+            "Script accepts --db-path and --session-id.",
+            "Script computes accel_mag and gyro_mag.",
+            "Script saves session plots to data/plots/."
+          ],
+          "plan_ref": "M6 - Task M6.1"
+        },
+        {
+          "id": "M6.2",
+          "title": "Create event plotting script",
+          "dependencies": [
+            "M4.2",
+            "M6.1"
+          ],
+          "deliverables": [
+            "analysis/scripts/plot_event.py"
+          ],
+          "acceptance_criteria": [
+            "Script accepts --event-id and configurable padding.",
+            "Script loads event windows using session_id and device_ms overlap.",
+            "Script saves event-centered plots to data/plots/."
+          ],
+          "plan_ref": "M6 - Task M6.2"
+        }
+      ]
+    },
+    {
+      "id": "M7",
+      "name": "Firmware Bench Read",
+      "tasks": [
+        {
+          "id": "M7.1",
+          "title": "Create PlatformIO project",
+          "dependencies": [
+            "M0.1"
+          ],
+          "deliverables": [
+            "firmware/esp8266_mpu6050_logger/platformio.ini",
+            "firmware/esp8266_mpu6050_logger/src/main.cpp",
+            "firmware/esp8266_mpu6050_logger/include/config.example.h"
+          ],
+          "acceptance_criteria": [
+            "PlatformIO project builds for a generic ESP8266 or ESP-12E/NodeMCU-style board.",
+            "Config example documents Wi-Fi SSID, password, server URL, and device ID."
+          ],
+          "plan_ref": "M7 - Task M7.1"
+        },
+        {
+          "id": "M7.2",
+          "title": "Implement I2C scanner mode",
+          "dependencies": [
+            "M7.1"
+          ],
+          "deliverables": [
+            "firmware/esp8266_mpu6050_logger/src/main.cpp"
+          ],
+          "acceptance_criteria": [
+            "Serial monitor prints detected I2C addresses.",
+            "MPU-6050 appears at 0x68."
+          ],
+          "plan_ref": "M7 - Task M7.2"
+        },
+        {
+          "id": "M7.3",
+          "title": "Read MPU-6050 data",
+          "dependencies": [
+            "M7.2"
+          ],
+          "deliverables": [
+            "firmware/esp8266_mpu6050_logger/src/main.cpp"
+          ],
+          "acceptance_criteria": [
+            "Serial output shows changing accel and gyro values at approximately 50 Hz.",
+            "Still sensor acceleration magnitude is near 1 g.",
+            "Motion causes visible changes."
+          ],
+          "plan_ref": "M7 - Task M7.3"
+        }
+      ]
+    },
+    {
+      "id": "M8",
+      "name": "Firmware Batch Upload",
+      "tasks": [
+        {
+          "id": "M8.1",
+          "title": "Implement Wi-Fi connection",
+          "dependencies": [
+            "M7.1"
+          ],
+          "deliverables": [
+            "firmware/esp8266_mpu6050_logger/src/main.cpp"
+          ],
+          "acceptance_criteria": [
+            "Device joins Wi-Fi reliably.",
+            "Firmware prints local IP.",
+            "Reconnect logic does not block permanently."
+          ],
+          "plan_ref": "M8 - Task M8.1"
+        },
+        {
+          "id": "M8.2",
+          "title": "Implement sample batching",
+          "dependencies": [
+            "M7.3"
+          ],
+          "deliverables": [
+            "firmware/esp8266_mpu6050_logger/src/main.cpp"
+          ],
+          "acceptance_criteria": [
+            "Firmware samples at 50 Hz.",
+            "Firmware prepares 50-sample batches once per second.",
+            "Each batch includes device_id, firmware_version, session_id, sequence, sample_hz, device_ms_start, and battery_mv.",
+            "Sequence number increments monotonically."
+          ],
+          "plan_ref": "M8 - Task M8.2"
+        },
+        {
+          "id": "M8.3",
+          "title": "Implement HTTP POST upload",
+          "dependencies": [
+            "M3.3",
+            "M8.1",
+            "M8.2"
+          ],
+          "deliverables": [
+            "firmware/esp8266_mpu6050_logger/src/main.cpp"
+          ],
+          "acceptance_criteria": [
+            "Firmware posts JSON to {SERVER_URL}/api/v1/imu/batch.",
+            "Server receives real sensor batches.",
+            "Server response is printed over serial.",
+            "Failed upload does not crash firmware and future uploads continue."
+          ],
+          "plan_ref": "M8 - Task M8.3"
+        },
+        {
+          "id": "M8.4",
+          "title": "Run long firmware test",
+          "dependencies": [
+            "M8.3"
+          ],
+          "deliverables": [
+            "Long-run test notes"
+          ],
+          "acceptance_criteria": [
+            "Device runs for 30 minutes without firmware crash.",
+            "Server receives roughly 90000 samples at 50 Hz.",
+            "Missing sequence numbers are identifiable.",
+            "No obvious memory leak appears during runtime."
+          ],
+          "plan_ref": "M8 - Task M8.4"
+        }
+      ]
+    },
+    {
+      "id": "M9",
+      "name": "Data Quality Validation",
+      "tasks": [
+        {
+          "id": "M9.1",
+          "title": "Create synthetic activity checklist",
+          "dependencies": [
+            "M6.1"
+          ],
+          "deliverables": [
+            "docs/v0_test_plan.md"
+          ],
+          "acceptance_criteria": [
+            "Checklist covers still table, rotations, gentle shake, aggressive shake, walk, resting, scratching, and shaking off.",
+            "Each test has expected signal characteristics and pass/fail notes."
+          ],
+          "plan_ref": "M9 - Task M9.1"
+        },
+        {
+          "id": "M9.2",
+          "title": "Collect first baseline session",
+          "dependencies": [
+            "M8.4",
+            "M9.1"
+          ],
+          "deliverables": [
+            "Baseline session review notes"
+          ],
+          "acceptance_criteria": [
+            "At least 15 minutes of continuous data is collected.",
+            "Session can be plotted.",
+            "Sequence gaps are documented.",
+            "Accel and gyro magnitudes are plausible."
+          ],
+          "plan_ref": "M9 - Task M9.2"
+        }
+      ]
+    },
+    {
+      "id": "M10",
+      "name": "Documentation",
+      "tasks": [
+        {
+          "id": "M10.1",
+          "title": "Write hardware wiring documentation",
+          "dependencies": [
+            "M7.1"
+          ],
+          "deliverables": [
+            "docs/hardware_wiring.md"
+          ],
+          "acceptance_criteria": [
+            "Wiring table maps MPU-6050 VCC, GND, SCL, SDA, INT, and AD0 to ESP8266 pins.",
+            "Notes mention shared 3.3 V supply and shared ground."
+          ],
+          "plan_ref": "M10 - Task M10.1"
+        },
+        {
+          "id": "M10.2",
+          "title": "Write API contract documentation",
+          "dependencies": [
+            "M4.1",
+            "M5.1"
+          ],
+          "deliverables": [
+            "docs/api_contract.md"
+          ],
+          "acceptance_criteria": [
+            "Docs include endpoint list, request examples, response examples, validation rules, and duplicate sequence behavior.",
+            "A firmware developer can implement against the API without reading server code."
+          ],
+          "plan_ref": "M10 - Task M10.2"
+        },
+        {
+          "id": "M10.3",
+          "title": "Write payload schema documentation",
+          "dependencies": [
+            "M3.1"
+          ],
+          "deliverables": [
+            "docs/payload_schema.md"
+          ],
+          "acceptance_criteria": [
+            "Docs define all fields, units, sample timing model, and sequence number purpose.",
+            "Data semantics are clear."
+          ],
+          "plan_ref": "M10 - Task M10.3"
+        }
+      ]
+    }
+  ],
+  "definition_of_done": [
+    "ESP8266 reads MPU-6050 at 50 Hz.",
+    "Device uploads batched IMU samples to local FastAPI server.",
+    "Server stores raw samples in SQLite.",
+    "Duplicate batch sequences are handled explicitly.",
+    "Manual event labels can be created with session_id and device-relative timing.",
+    "Samples can be exported as CSV.",
+    "Session and event windows can be plotted.",
+    "At least one 15-minute baseline session is collected and reviewed.",
+    "Documentation exists for wiring, API, payload schema, and test procedure.",
+    "No seizure detection logic is implemented in V0."
+  ]
+}

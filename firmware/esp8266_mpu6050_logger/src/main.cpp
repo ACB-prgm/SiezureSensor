@@ -1,0 +1,258 @@
+#include <Arduino.h>
+#include <Wire.h>
+
+namespace {
+constexpr uint8_t SDA_PIN = D2; // GPIO4
+constexpr uint8_t SCL_PIN = D1; // GPIO5
+constexpr uint32_t SERIAL_BAUD = 115200;
+constexpr uint32_t SAMPLE_INTERVAL_MS = 20; // 50 Hz
+constexpr bool ENABLE_STARTUP_I2C_SCAN = true;
+
+constexpr uint8_t MPU6050_ADDRESS = 0x68;
+constexpr uint8_t MPU6050_REG_SMPLRT_DIV = 0x19;
+constexpr uint8_t MPU6050_REG_CONFIG = 0x1A;
+constexpr uint8_t MPU6050_REG_GYRO_CONFIG = 0x1B;
+constexpr uint8_t MPU6050_REG_ACCEL_CONFIG = 0x1C;
+constexpr uint8_t MPU6050_REG_ACCEL_XOUT_H = 0x3B;
+constexpr uint8_t MPU6050_REG_PWR_MGMT_1 = 0x6B;
+constexpr uint8_t MPU6050_REG_WHO_AM_I = 0x75;
+
+constexpr float ACCEL_LSB_PER_G = 16384.0F; // +/- 2 g
+constexpr float GYRO_LSB_PER_DPS = 131.0F;  // +/- 250 deg/s
+
+struct ImuReading {
+  float ax_g;
+  float ay_g;
+  float az_g;
+  float gx_dps;
+  float gy_dps;
+  float gz_dps;
+};
+
+uint32_t next_sample_ms = 0;
+bool imu_ready = false;
+
+void printAddress(uint8_t address) {
+  Serial.print("0x");
+  if (address < 16) {
+    Serial.print("0");
+  }
+  Serial.print(address, HEX);
+}
+
+void scanI2CBus() {
+  uint8_t found_count = 0;
+
+  Serial.println();
+  Serial.println("Scanning I2C bus...");
+
+  for (uint8_t address = 1; address < 127; address++) {
+    Wire.beginTransmission(address);
+    const uint8_t error = Wire.endTransmission();
+
+    if (error == 0) {
+      Serial.print("I2C device found at ");
+      printAddress(address);
+      if (address == MPU6050_ADDRESS) {
+        Serial.print(" (expected MPU-6050)");
+      }
+      Serial.println();
+      found_count++;
+    } else if (error == 4) {
+      Serial.print("Unknown I2C error at ");
+      printAddress(address);
+      Serial.println();
+    }
+  }
+
+  if (found_count == 0) {
+    Serial.println("No I2C devices found. Check VCC, GND, SDA, and SCL wiring.");
+  } else {
+    Serial.print("Scan complete. Devices found: ");
+    Serial.println(found_count);
+  }
+}
+
+bool writeRegister(uint8_t reg, uint8_t value) {
+  Wire.beginTransmission(MPU6050_ADDRESS);
+  Wire.write(reg);
+  Wire.write(value);
+  return Wire.endTransmission() == 0;
+}
+
+bool readRegisters(uint8_t start_reg, uint8_t *buffer, size_t length) {
+  Wire.beginTransmission(MPU6050_ADDRESS);
+  Wire.write(start_reg);
+  if (Wire.endTransmission(false) != 0) {
+    return false;
+  }
+
+  const size_t received = Wire.requestFrom(MPU6050_ADDRESS, length);
+  if (received != length) {
+    while (Wire.available() > 0) {
+      Wire.read();
+    }
+    return false;
+  }
+
+  for (size_t i = 0; i < length; i++) {
+    buffer[i] = static_cast<uint8_t>(Wire.read());
+  }
+
+  return true;
+}
+
+bool readRegister(uint8_t reg, uint8_t &value) {
+  uint8_t buffer[1] = {0};
+  if (!readRegisters(reg, buffer, sizeof(buffer))) {
+    return false;
+  }
+  value = buffer[0];
+  return true;
+}
+
+int16_t readInt16(uint8_t high_byte, uint8_t low_byte) {
+  return static_cast<int16_t>((static_cast<uint16_t>(high_byte) << 8) | low_byte);
+}
+
+bool initializeMpu6050() {
+  uint8_t who_am_i = 0;
+  if (!readRegister(MPU6050_REG_WHO_AM_I, who_am_i)) {
+    Serial.println("MPU-6050 WHO_AM_I read failed.");
+    return false;
+  }
+
+  Serial.print("MPU-6050 WHO_AM_I: ");
+  printAddress(who_am_i);
+  Serial.println();
+
+  if ((who_am_i & 0x7E) != MPU6050_ADDRESS) {
+    Serial.println("Unexpected WHO_AM_I value. Check sensor address and wiring.");
+    return false;
+  }
+
+  bool ok = true;
+  ok = writeRegister(MPU6050_REG_PWR_MGMT_1, 0x00) && ok;   // Wake sensor.
+  delay(100);
+  ok = writeRegister(MPU6050_REG_CONFIG, 0x03) && ok;       // DLPF on, gyro output 1 kHz.
+  ok = writeRegister(MPU6050_REG_SMPLRT_DIV, 19) && ok;     // 1 kHz / (1 + 19) = 50 Hz.
+  ok = writeRegister(MPU6050_REG_GYRO_CONFIG, 0x00) && ok;  // +/- 250 deg/s.
+  ok = writeRegister(MPU6050_REG_ACCEL_CONFIG, 0x00) && ok; // +/- 2 g.
+
+  if (!ok) {
+    Serial.println("MPU-6050 configuration write failed.");
+    return false;
+  }
+
+  Serial.println("MPU-6050 initialized at +/-2 g, +/-250 deg/s, 50 Hz sample cadence.");
+  return true;
+}
+
+bool readImu(ImuReading &reading) {
+  uint8_t buffer[14] = {0};
+  if (!readRegisters(MPU6050_REG_ACCEL_XOUT_H, buffer, sizeof(buffer))) {
+    return false;
+  }
+
+  const int16_t raw_ax = readInt16(buffer[0], buffer[1]);
+  const int16_t raw_ay = readInt16(buffer[2], buffer[3]);
+  const int16_t raw_az = readInt16(buffer[4], buffer[5]);
+  const int16_t raw_gx = readInt16(buffer[8], buffer[9]);
+  const int16_t raw_gy = readInt16(buffer[10], buffer[11]);
+  const int16_t raw_gz = readInt16(buffer[12], buffer[13]);
+
+  reading.ax_g = static_cast<float>(raw_ax) / ACCEL_LSB_PER_G;
+  reading.ay_g = static_cast<float>(raw_ay) / ACCEL_LSB_PER_G;
+  reading.az_g = static_cast<float>(raw_az) / ACCEL_LSB_PER_G;
+  reading.gx_dps = static_cast<float>(raw_gx) / GYRO_LSB_PER_DPS;
+  reading.gy_dps = static_cast<float>(raw_gy) / GYRO_LSB_PER_DPS;
+  reading.gz_dps = static_cast<float>(raw_gz) / GYRO_LSB_PER_DPS;
+
+  return true;
+}
+
+void printCsvHeader() {
+  Serial.println("device_ms,ax_g,ay_g,az_g,gx_dps,gy_dps,gz_dps,accel_mag_g");
+}
+
+void printReading(uint32_t device_ms, const ImuReading &reading) {
+  const float accel_mag_g = sqrtf(
+      reading.ax_g * reading.ax_g +
+      reading.ay_g * reading.ay_g +
+      reading.az_g * reading.az_g);
+
+  Serial.print(device_ms);
+  Serial.print(',');
+  Serial.print(reading.ax_g, 4);
+  Serial.print(',');
+  Serial.print(reading.ay_g, 4);
+  Serial.print(',');
+  Serial.print(reading.az_g, 4);
+  Serial.print(',');
+  Serial.print(reading.gx_dps, 3);
+  Serial.print(',');
+  Serial.print(reading.gy_dps, 3);
+  Serial.print(',');
+  Serial.print(reading.gz_dps, 3);
+  Serial.print(',');
+  Serial.println(accel_mag_g, 4);
+}
+} // namespace
+
+void setup() {
+  Serial.begin(SERIAL_BAUD);
+  delay(200);
+
+  Serial.println();
+  Serial.println("Dog Seizure Sensor V0 - ESP8266 MPU-6050 bench read");
+  Serial.println("Expected MPU-6050 address: 0x68");
+  Serial.println("Wiring: SDA=D2/GPIO4, SCL=D1/GPIO5, VCC=3V3, GND=GND");
+
+  Wire.begin(SDA_PIN, SCL_PIN);
+  Wire.setClock(400000);
+
+  if (ENABLE_STARTUP_I2C_SCAN) {
+    scanI2CBus();
+  }
+
+  imu_ready = initializeMpu6050();
+  if (imu_ready) {
+    printCsvHeader();
+  } else {
+    Serial.println("IMU is not ready. Firmware will retry initialization every second.");
+  }
+
+  next_sample_ms = millis();
+}
+
+void loop() {
+  const uint32_t now_ms = millis();
+
+  if (!imu_ready) {
+    static uint32_t next_retry_ms = 0;
+    if (static_cast<int32_t>(now_ms - next_retry_ms) >= 0) {
+      imu_ready = initializeMpu6050();
+      if (imu_ready) {
+        printCsvHeader();
+        next_sample_ms = millis();
+      }
+      next_retry_ms = now_ms + 1000;
+    }
+    return;
+  }
+
+  if (static_cast<int32_t>(now_ms - next_sample_ms) >= 0) {
+    ImuReading reading = {};
+    if (readImu(reading)) {
+      printReading(now_ms, reading);
+    } else {
+      Serial.println("IMU read failed. Will retry initialization.");
+      imu_ready = false;
+    }
+
+    next_sample_ms += SAMPLE_INTERVAL_MS;
+    if (static_cast<int32_t>(millis() - next_sample_ms) > static_cast<int32_t>(SAMPLE_INTERVAL_MS)) {
+      next_sample_ms = millis() + SAMPLE_INTERVAL_MS;
+    }
+  }
+}

@@ -1,0 +1,10 @@
+#pragma once
+
+// Copy this file to config.h when Wi-Fi upload support is implemented.
+// Keep config.h out of source control because it will contain private values.
+
+#define WIFI_SSID "your-wifi-ssid"
+#define WIFI_PASSWORD "your-wifi-password"
+#define SERVER_URL "http://192.168.1.100:8000"
+#define DEVICE_ID "beanie-v0-001"
+#define FIRMWARE_VERSION "0.1.0"
