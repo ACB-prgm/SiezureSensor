@@ -85,6 +85,48 @@ python analysis/scripts/plot_event.py \
 
 Exports are written to `data/exports/` by default. Plots are written to `data/plots/` as PNG files.
 
+## Sprint 3 Device Upload Workflow
+
+Create private firmware config:
+
+```sh
+cp firmware/esp8266_mpu6050_logger/include/config.example.h \
+  firmware/esp8266_mpu6050_logger/include/config.h
+```
+
+Edit `config.h` with your Wi-Fi credentials, LAN server URL, device ID, firmware version, and session ID. `SERVER_URL` should not include a trailing slash.
+
+Start the server on the LAN:
+
+```sh
+cd server
+. .venv/bin/activate
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+Flash and monitor the firmware:
+
+```sh
+cd firmware/esp8266_mpu6050_logger
+PLATFORMIO_CORE_DIR=/Users/aaronbastian/Code/SiezureSensor/.platformio-core \
+  /Users/aaronbastian/Code/SiezureSensor/.venv-platformio/bin/pio run \
+  --target upload \
+  --upload-port /dev/cu.usbserial-83420
+
+PLATFORMIO_CORE_DIR=/Users/aaronbastian/Code/SiezureSensor/.platformio-core \
+  /Users/aaronbastian/Code/SiezureSensor/.venv-platformio/bin/pio device monitor \
+  --port /dev/cu.usbserial-83420 \
+  --baud 115200
+```
+
+Expected successful upload response:
+
+```json
+{"status":"ok","device_id":"beanie-v0-001","sequence":0,"samples_received":50}
+```
+
+If uploads return `409 Conflict`, change `SESSION_ID` before reflashing or clear the local database. Sequence numbers restart at `0` on firmware reboot.
+
 ## Firmware Setup
 
 The ESP8266 firmware lives in `firmware/esp8266_mpu6050_logger`.

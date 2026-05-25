@@ -49,6 +49,8 @@ Rationale:
 
 ## Sprint 3: Real Device Upload Loop
 
+Status: complete in firmware; real LAN upload requires local `config.h` credentials.
+
 Milestones:
 
 - `M8.1` Wi-Fi connection
