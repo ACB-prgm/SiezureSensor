@@ -27,6 +27,8 @@ Outcome:
 
 ## Sprint 2: Label, Export, Inspect
 
+Status: complete.
+
 Milestones:
 
 - `M4` Manual Event Labeling API
