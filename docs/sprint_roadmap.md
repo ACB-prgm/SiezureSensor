@@ -69,12 +69,53 @@ Rationale:
 - Keep upload work separate from analysis tooling so firmware-server integration can be tested against stable APIs.
 - Allow server hardening if real device uploads expose timing, payload, or duplicate-sequence issues.
 
-## Sprint 4: Long-Run Validation
+## Sprint 4: Interactive Labeling Workbench
+
+Milestones:
+
+- `M9` Interactive Labeling Workbench
+
+Outcome:
+
+- A local browser UI lists recorded sessions.
+- A selected session can be inspected as a zoomable/pannable IMU timeline.
+- Accel axes, gyro axes, accel magnitude, and gyro magnitude are visible together.
+- Existing labels are overlaid on the timeline.
+- New labels can be created by selecting start/end points visually.
+- Labels can be edited and deleted without typing raw device milliseconds.
+
+Rationale:
+
+- A visual labeling workflow is required before meaningful model work.
+- Human labels should be time ranges, because the future model will classify fixed-size sliding windows.
+- Building this before collecting many long sessions prevents unlabeled data debt.
+
+## Sprint 5: Sliding-Window Dataset Prep
+
+Milestones:
+
+- `M10` Sliding-Window Dataset Preparation
+
+Outcome:
+
+- Human-labeled time ranges can be converted into fixed-size model examples.
+- Initial supported windows are 2 seconds / 100 samples and 5 seconds / 250 samples at 50 Hz.
+- Window labels are assigned by overlap with human event windows.
+- Unlabeled time remains `unlabeled` unless explicitly labeled as resting, walking, or another activity.
+- Mixed-overlap windows are marked or excluded by documented rules.
+- Baseline feature CSVs can be exported for future model training.
+
+Rationale:
+
+- The model design should drive the labeling semantics before training starts.
+- A simple sliding-window dataset gives a clear path from raw IMU data to categorical classifiers.
+
+## Sprint 6: Long-Run Validation
 
 Milestones:
 
 - `M8.4` Long-run firmware test
-- `M9` Data Quality Validation
+- `M11` Data Quality Validation
 
 Outcome:
 
@@ -83,16 +124,17 @@ Outcome:
 - Sequence gaps are documented.
 - Accel and gyro magnitudes are reviewed for plausibility.
 - Synthetic activity checklist is complete.
+- Known activity periods are labeled in the workbench.
 
 Rationale:
 
 - Treat long-run hardware validation as its own sprint because it depends on physical setup, uninterrupted runtime, and manual review.
 
-## Sprint 5: Documentation and V0 Closeout
+## Sprint 7: Documentation and V0 Closeout
 
 Milestones:
 
-- `M10` Documentation
+- `M12` Documentation
 - Final V0 cleanup from earlier sprints
 
 Outcome:
@@ -100,6 +142,7 @@ Outcome:
 - Hardware wiring documentation is complete.
 - API contract documentation is complete.
 - Payload schema documentation is complete.
+- Labeling and model-design documentation is complete.
 - Test procedure is documented.
 - V0 definition of done is reviewed and closed.
 

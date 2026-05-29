@@ -9,10 +9,11 @@ Build a V0 data acquisition system for a dog seizure sensor using:
 - Wi-Fi batch upload
 - Python FastAPI ingestion server
 - SQLite storage
-- Manual event labeling
+- Manual event labeling through an interactive timeline workbench
 - Dataset export for future algorithm development
+- Sliding-window dataset preparation for future categorical motion models
 
-V0 is not a seizure detector or medical alerting device. It is a reliable raw IMU data collection and labeling system.
+V0 is not a seizure detector or medical alerting device. It is a reliable raw IMU data collection and labeling system that produces training-ready labeled time windows.
 
 ---
 
@@ -27,7 +28,9 @@ FastAPI server
 	↓
 SQLite database
 	↓
-Analysis/export scripts
+React labeling workbench + analysis/export scripts
+	↓
+Future sliding-window categorical model
 ```
 
 ---
@@ -41,7 +44,8 @@ Analysis/export scripts
 5. Include sequence numbers to detect gaps.
 6. Keep firmware simple and deterministic.
 7. Build server-side validation before algorithm work.
-8. Do not implement seizure detection in V0.
+8. Design labels as time ranges so they can be converted into fixed-size sliding-window training examples.
+9. Do not implement seizure detection or medical alerting in V0.
 
 ---
 
@@ -54,7 +58,109 @@ V0 uses device-relative timing as the source of truth for IMU samples.
 - The server stores `device_ms = device_ms_start + dt_ms` for every sample.
 - `server_received_at` is stored for ingestion diagnostics only and must not be treated as sample time.
 - Manual event labels are tied to a specific `session_id` and use the same device-relative millisecond coordinate system via `start_device_ms` and `end_device_ms`.
+- The labeling UI should create, edit, and delete time-range labels against this same device-relative coordinate system.
 - Optional wall-clock fields may be added later, but V0 exports and plotting should join samples to labels using `session_id` and device-relative time overlap.
+
+---
+
+## Labeling and Model Design
+
+The project should treat labeling as the bridge between raw IMU collection and future categorical modeling. The user-facing labeling tool should not label individual rows. It should label continuous spans of time, because the future model will operate on fixed-size windows cut from the continuous IMU stream.
+
+### Human Labels
+
+Human labels are authoritative training targets. They are stored as event windows:
+
+```text
+session_id
+event_type
+severity
+start_device_ms
+end_device_ms
+source = manual
+notes
+```
+
+The labeling workbench should support:
+
+- selecting a session
+- viewing accel axes, gyro axes, accel magnitude, and gyro magnitude on a shared timeline
+- zooming and panning through long sessions
+- click-dragging or entering start/end points for an event
+- selecting an existing event type or creating an allowed new category
+- editing and deleting existing labels
+- overlaying labels on the timeline
+- exporting labeled samples and windowed datasets
+
+Initial label categories should include:
+
+- `seizure`
+- `sleep_twitch`
+- `scratching`
+- `scooting`
+- `shake_off`
+- `walking`
+- `running`
+- `resting`
+- `unknown`
+
+### Sliding-Window Dataset
+
+The first practical model should be a sliding-window categorical classifier. Raw IMU samples are converted into fixed-size windows, then each window receives one category label based on overlap with human event windows.
+
+Recommended initial window settings:
+
+- sample rate: 50 Hz
+- window sizes to evaluate: 2 seconds / 100 samples and 5 seconds / 250 samples
+- stride: 50 percent overlap by default
+- prediction cadence: one prediction every 1 second for 2 second windows, or every 2.5 seconds for 5 second windows
+
+Each generated window should include:
+
+```text
+session_id
+device_id
+window_start_device_ms
+window_end_device_ms
+sample_count
+label
+label_source
+overlap_ratio
+ax/ay/az/gx/gy/gz samples or derived features
+```
+
+Window label assignment rules:
+
+- If a window strongly overlaps one human label, assign that event type.
+- If a window overlaps multiple incompatible labels, mark it `mixed` or exclude it from training.
+- If a window has no human label, keep it `unlabeled` unless the user explicitly labeled the period as `resting`, `walking`, or another normal activity.
+- Do not treat unlabeled time as normal by default.
+- Split train/test data by session, not by random rows, to reduce leakage.
+
+### Model Path
+
+The first model should be simple and debuggable:
+
+1. Generate sliding windows from labeled sessions.
+2. Extract per-window features such as accel magnitude mean/std/max, gyro magnitude mean/std/max, axis variance, jerk, and simple frequency-domain energy.
+3. Train a baseline classifier such as RandomForest, gradient boosting, or logistic regression.
+4. Compare against a later raw-window model such as a 1D CNN only after enough labeled data exists.
+5. Smooth predictions over time before turning them into event spans.
+
+Future model predictions should be stored separately from human labels. A prediction record should include:
+
+```text
+model_version
+session_id
+window_start_device_ms
+window_end_device_ms
+predicted_label
+confidence
+review_status
+reviewed_event_id
+```
+
+The workbench should eventually display model predictions as a separate overlay track and let the user accept, reject, or correct them. Accepted/corrected predictions can become human-reviewed labels, but raw model predictions should remain auditable and separate.
 
 ---
 
@@ -93,11 +199,17 @@ dog-seizure-sensor/
 			test_imu_upload.py
 			test_events.py
 
+	web/
+		labeling_workbench/
+			src/
+			package.json
+
 	analysis/
 		scripts/
 			export_session.py
 			plot_session.py
 			plot_event.py
+			build_windows.py
 		notebooks/
 			01_inspect_raw_data.ipynb
 			02_event_window_review.ipynb
@@ -525,6 +637,7 @@ Event types allowed for V0:
 - `seizure`
 - `sleep_twitch`
 - `scratching`
+- `scooting`
 - `shake_off`
 - `walking`
 - `running`
@@ -798,9 +911,137 @@ Acceptance criteria:
 
 ---
 
-## M9 — Data Quality Validation
+## M9 — Interactive Labeling Workbench
 
-### Task M9.1 — Create synthetic activity test checklist
+### Task M9.1 — Create local web workbench
+
+Create:
+
+```text
+web/labeling_workbench/
+```
+
+Behavior:
+
+- Runs locally against the FastAPI server.
+- Lists available sessions.
+- Loads one session at a time.
+- Displays accel axes, gyro axes, accel magnitude, and gyro magnitude on a shared timeline.
+- Supports zooming and panning.
+
+Acceptance criteria:
+
+- User can choose a session and inspect its IMU timeline without running analysis scripts manually.
+- Workbench can handle at least a 15-minute session without becoming unusable.
+
+### Task M9.2 — Add session and event API support for workbench
+
+Create or expand endpoints as needed:
+
+```http
+GET /api/v1/sessions
+GET /api/v1/sessions/{session_id}/samples
+DELETE /api/v1/events/{event_id}
+PATCH /api/v1/events/{event_id}
+```
+
+Behavior:
+
+- Session list returns enough metadata to choose a recording.
+- Sample endpoint returns downsampled or range-filtered data suitable for timeline rendering.
+- Event update/delete endpoints allow correcting labels from the UI.
+
+Acceptance criteria:
+
+- Workbench does not need to read SQLite directly.
+- Event edits remain validated by the server.
+- Large sessions can be inspected by fetching ranges or downsampled timeline data.
+
+### Task M9.3 — Implement timeline event labeling
+
+Behavior:
+
+- User can select start and end points on the timeline.
+- User can assign an event type, severity, source, and notes.
+- User can choose an existing category or create/select from the allowed category list.
+- Existing labels render as overlays on the timeline.
+- Labels are saved through the existing event API.
+
+Acceptance criteria:
+
+- User can create a label without manually typing device milliseconds.
+- User can edit and delete mistaken labels.
+- Saved labels use `session_id`, `start_device_ms`, and `end_device_ms`.
+- Label overlays align visually with the signal timeline.
+
+---
+
+## M10 — Sliding-Window Dataset Preparation
+
+### Task M10.1 — Add window generation script
+
+Create:
+
+```text
+analysis/scripts/build_windows.py
+```
+
+Behavior:
+
+- Reads one or more labeled sessions from SQLite.
+- Generates fixed-size sliding windows from raw IMU samples.
+- Supports configurable `--window-ms` and `--stride-ms`.
+- Assigns each window a label using overlap with human event windows.
+- Writes a dataset manifest and features/arrays under `data/exports/`.
+
+Acceptance criteria:
+
+- Script can generate 2 second / 100 sample windows for 50 Hz data.
+- Script can generate 5 second / 250 sample windows for 50 Hz data.
+- Unlabeled windows remain `unlabeled`, not automatically `resting` or `normal`.
+- Mixed-overlap windows are marked `mixed` or excluded by a documented option.
+- Output includes `session_id`, `device_id`, `window_start_device_ms`, `window_end_device_ms`, `label`, and `overlap_ratio`.
+
+### Task M10.2 — Add baseline feature extraction
+
+Behavior:
+
+- Computes simple per-window features for accel and gyro channels.
+- Includes accel magnitude and gyro magnitude summary statistics.
+- Includes variance and jerk-style features where practical.
+
+Acceptance criteria:
+
+- Feature output is reproducible from the raw SQLite database.
+- Feature columns are documented.
+- Generated feature CSV opens in pandas.
+
+### Task M10.3 — Document model design
+
+Create:
+
+```text
+docs/model_and_labeling_design.md
+```
+
+Include:
+
+- human label semantics
+- sliding-window settings
+- overlap label assignment rules
+- train/test split guidance
+- future prediction review workflow
+
+Acceptance criteria:
+
+- Labeling decisions are clearly connected to future model training.
+- The document explains why unlabeled time is not treated as normal by default.
+
+---
+
+## M11 — Data Quality Validation
+
+### Task M11.1 — Create synthetic activity test checklist
 
 Create:
 
@@ -817,6 +1058,7 @@ Include tests:
 - attach to collar/harness and walk
 - dog resting
 - dog scratching
+- dog scooting if safely observable
 - dog shaking off
 
 Acceptance criteria:
@@ -824,22 +1066,23 @@ Acceptance criteria:
 - Each test has expected signal characteristics.
 - Each test has pass/fail notes section.
 
-### Task M9.2 — Collect first baseline session
+### Task M11.2 — Collect first baseline session
 
 Use the real device and real server.
 
 Acceptance criteria:
 
 - At least 15 minutes of continuous data.
-- Session can be plotted.
+- Session can be plotted and inspected in the labeling workbench.
 - Sequence gaps are documented.
 - Accel and gyro magnitudes are plausible.
+- At least a few known periods are labeled through the workbench.
 
 ---
 
-## M10 — Documentation
+## M12 — Documentation
 
-### Task M10.1 — Hardware wiring documentation
+### Task M12.1 — Hardware wiring documentation
 
 Create:
 
@@ -863,7 +1106,7 @@ Acceptance criteria:
 - Wiring is clear enough to rebuild from scratch.
 - Notes mention shared 3.3 V supply and shared ground.
 
-### Task M10.2 — API contract documentation
+### Task M12.2 — API contract documentation
 
 Create:
 
@@ -878,12 +1121,13 @@ Include:
 - response examples
 - validation rules
 - duplicate sequence behavior
+- workbench-oriented session/sample/event endpoints
 
 Acceptance criteria:
 
 - A firmware developer can implement against the API without reading server code.
 
-### Task M10.3 — Payload schema documentation
+### Task M12.3 — Payload schema documentation
 
 Create:
 
@@ -907,6 +1151,7 @@ Acceptance criteria:
 # Codex Implementation Guidance
 
 Use this plan as the source of truth. Work milestone-by-milestone. Do not jump ahead to ML, BLE, battery optimization, alerting, or on-device detection.
+The labeling workbench and sliding-window dataset preparation are not ML model training; they are required data infrastructure for future modeling.
 
 When implementing code:
 
@@ -937,6 +1182,7 @@ Start with milestones M0 through M3 only:
 
 Do not implement firmware yet.
 Do not implement seizure detection or ML.
+Do not implement model training yet.
 Do not optimize battery life.
 Keep the code simple, typed, and testable.
 After implementation, summarize changed files and how to run tests.
@@ -991,6 +1237,50 @@ After implementation, summarize changed files and example commands.
 
 ---
 
+## Suggested Codex Prompt for Labeling Workbench
+
+```text
+Continue implementing V0 of the dog seizure sensor data acquisition system.
+
+Use DEVELOPMENT_PLAN.md as the source of truth.
+
+Implement milestone M9:
+- local labeling workbench
+- session list and session sample endpoints
+- timeline chart for accel/gyro/magnitude
+- event overlays
+- create, edit, and delete labels from selected timeline ranges
+
+Do not implement model training yet.
+Do not implement medical alerting.
+Keep labels stored as session_id plus device-relative start/end milliseconds.
+After implementation, summarize changed files and how to run the server and workbench.
+```
+
+---
+
+## Suggested Codex Prompt for Windowed Dataset Prep
+
+```text
+Continue implementing V0 of the dog seizure sensor data acquisition system.
+
+Use DEVELOPMENT_PLAN.md as the source of truth.
+
+Implement milestone M10:
+- sliding-window dataset generation
+- configurable window and stride
+- overlap-based label assignment
+- baseline feature extraction
+- documentation of dataset semantics
+
+Do not implement production seizure detection.
+Do not treat unlabeled time as normal.
+Split evaluation data by session, not random rows.
+After implementation, summarize generated outputs and verification commands.
+```
+
+---
+
 # V0 Definition of Done
 
 V0 is complete when:
@@ -1002,6 +1292,8 @@ V0 is complete when:
 5. Manual event labels can be created.
 6. Samples can be exported as CSV.
 7. Session and event windows can be plotted.
-8. At least one 15-minute baseline session is collected and reviewed.
-9. Documentation exists for wiring, API, payload schema, and test procedure.
-10. No seizure detection logic is implemented in V0.
+8. Labels can be created, edited, and deleted from an interactive timeline workbench.
+9. Sliding-window datasets can be generated from human-labeled time ranges.
+10. At least one 15-minute baseline session is collected and reviewed.
+11. Documentation exists for wiring, API, payload schema, labeling workflow, model design, and test procedure.
+12. No seizure detection or medical alerting logic is implemented in V0.
