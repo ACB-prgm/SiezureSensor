@@ -17,6 +17,7 @@ Allowed event types:
 - `seizure`
 - `sleep_twitch`
 - `scratching`
+- `scooting`
 - `shake_off`
 - `walking`
 - `running`

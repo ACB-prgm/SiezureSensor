@@ -18,7 +18,7 @@ ESP8266 firmware
   -> Wi-Fi HTTP POST
 FastAPI server
   -> SQLite database
-Analysis/export scripts
+React labeling workbench + analysis/export scripts
 ```
 
 ## Local Server Setup
@@ -84,6 +84,38 @@ python analysis/scripts/plot_event.py \
 ```
 
 Exports are written to `data/exports/` by default. Plots are written to `data/plots/` as PNG files.
+
+## Sprint 4 Labeling Workbench
+
+The local labeling workbench is a browser UI for visually inspecting sessions and creating event labels.
+
+Start the API:
+
+```sh
+cd server
+. .venv/bin/activate
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+Start the workbench:
+
+```sh
+cd web/labeling_workbench
+npm install
+npm run dev
+```
+
+Open `http://127.0.0.1:5173`.
+
+The workbench lets you:
+
+- select a recorded session
+- view accel, gyro, accel magnitude, and gyro magnitude on a timeline
+- zoom with the mouse wheel and pan by dragging
+- click `Select range`, drag across the timeline, and save a label
+- edit or delete existing labels
+
+Set `VITE_API_BASE_URL` if the API is not running at `http://127.0.0.1:8000`.
 
 ## Sprint 3 Device Upload Workflow
 
