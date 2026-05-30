@@ -16,7 +16,6 @@ def api_status(db: OrmSession = Depends(get_db)) -> dict[str, object]:
   sample_stats = db.query(
     func.count(IMUSample.id),
     func.max(IMUSample.server_received_at),
-    func.max(IMUSample.device_ms),
   ).one()
   batch_stats = db.query(
     func.count(Batch.id),
@@ -28,6 +27,7 @@ def api_status(db: OrmSession = Depends(get_db)) -> dict[str, object]:
     .order_by(func.max(IMUSample.server_received_at).desc())
     .first()
   )
+  latest_sample = db.query(IMUSample).order_by(IMUSample.id.desc()).first()
 
   return {
     "status": "ok",
@@ -38,7 +38,7 @@ def api_status(db: OrmSession = Depends(get_db)) -> dict[str, object]:
     "sample_count": sample_stats[0] or 0,
     "latest_batch_received_at": batch_stats[1],
     "latest_sample_received_at": sample_stats[1],
-    "latest_device_ms": sample_stats[2],
+    "latest_device_ms": latest_sample.device_ms if latest_sample else None,
     "latest_session": (
       {
         "session_id": latest_session[0],

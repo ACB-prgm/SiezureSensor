@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   API_BASE_URL,
@@ -172,10 +172,13 @@ function App() {
   const [editingLabel, setEditingLabel] = useState<EventLabel | null>(null);
   const [form, setForm] = useState<LabelFormState>(DEFAULT_FORM);
   const [sessionForm, setSessionForm] = useState<SessionFormState>(DEFAULT_SESSION_FORM);
+  const lastRuntimeSampleCountRef = useRef<number | null>(null);
 
-  async function loadSessions() {
+  async function loadSessions(showLoading = true) {
     try {
-      setIsLoading(true);
+      if (showLoading) {
+        setIsLoading(true);
+      }
       const result = await listSessions();
       setSessions(result);
       setSelectedSessionId((current) => current ?? result[0]?.session_id ?? null);
@@ -183,7 +186,9 @@ function App() {
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Failed to load sessions");
     } finally {
-      setIsLoading(false);
+      if (showLoading) {
+        setIsLoading(false);
+      }
     }
   }
 
@@ -196,7 +201,12 @@ function App() {
       setApiStatusMessage(controlStatus.message);
 
       if (controlStatus.apiReachable) {
-        setApiRuntimeStatus(await getApiRuntimeStatus());
+        const runtimeStatus = await getApiRuntimeStatus();
+        setApiRuntimeStatus(runtimeStatus);
+        if (runtimeStatus.sample_count !== lastRuntimeSampleCountRef.current) {
+          lastRuntimeSampleCountRef.current = runtimeStatus.sample_count;
+          await loadSessions(false);
+        }
       } else {
         setApiRuntimeStatus(null);
       }
