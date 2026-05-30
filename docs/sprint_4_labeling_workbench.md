@@ -44,14 +44,31 @@ If the workbench is opened through a LAN address and `VITE_API_BASE_URL` is not 
 
 1. Select a session from the left panel.
 2. Inspect accel axes, gyro axes, accel magnitude, and gyro magnitude.
-3. Use the mouse wheel to zoom and drag the timeline to pan.
-4. Click `Select range`.
-5. Drag across the timeline to choose start and end device milliseconds.
-6. Pick an event type, optional severity, source, and notes.
-7. Click `Create label`.
-8. Use the label list to edit or delete mistakes.
+3. Use horizontal trackpad scrolling or the horizontal slider to pan.
+4. Use vertical scrolling, trackpad zoom, or the `+` / `-` controls to zoom.
+5. Use the vertical scale slider to expand or compress the signal amplitude view.
+6. Read the x-axis as wall-clock date/time labels. Tick detail changes with zoom level.
+7. Click `Select range`.
+8. Drag across the timeline to choose start and end device milliseconds.
+9. Adjust range handles by dragging either edge, or edit hour/minute/second fields in the form.
+10. Pick an event type, optional severity, and notes.
+11. Click `Create label`.
+12. Use the label list to select, zoom to, edit, or delete labels.
 
 The UI displays readable timing, but all saved labels use device-relative milliseconds.
+Manual labels are saved with `source = manual`; the source is not user-editable in the workbench.
+Overlapping labels in the same session are rejected.
+
+## Manual Session Creation
+
+The workbench can create an empty session before data is collected. Use the `New Session` form in the session pane with:
+
+- `session_id`
+- `device_id`
+- optional mount location
+- optional notes
+
+The firmware still needs to upload with the same `SESSION_ID` to attach samples to that session.
 
 ## API Endpoints
 
@@ -59,6 +76,7 @@ Workbench session endpoints:
 
 ```http
 GET /api/v1/sessions
+POST /api/v1/sessions
 GET /api/v1/sessions/{session_id}/samples?start_device_ms=0&end_device_ms=10000&max_points=2000
 ```
 

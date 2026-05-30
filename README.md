@@ -111,9 +111,13 @@ The workbench lets you:
 
 - select a recorded session
 - view accel, gyro, accel magnitude, and gyro magnitude on a timeline
-- zoom with the mouse wheel and pan by dragging
-- click `Select range`, drag across the timeline, and save a label
+- pan with horizontal scrolling or the horizontal slider
+- zoom with vertical scrolling, trackpad zoom, or the `+` / `-` controls
+- adjust signal amplitude with the vertical scale slider
+- click `Select range`, drag across the timeline, adjust range handles, and save a label
+- enter start/end hour, minute, and second values without changing the label date
 - edit or delete existing labels
+- create a new empty session before collecting data
 
 By default, the workbench calls the API on the same hostname at port `8000`. Set `VITE_API_BASE_URL` if the API is somewhere else.
 
