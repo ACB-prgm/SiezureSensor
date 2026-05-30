@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import type { EventLabel, SessionSample } from "./types";
+import type { EventLabel, SelectionRange, SessionSample } from "./types";
 
 type TimelineProps = {
   samples: SessionSample[];
   labels: EventLabel[];
+  isSelectionMode: boolean;
+  selectedRange: SelectionRange | null;
+  onRangeSelected: (range: SelectionRange) => void;
 };
 
 type Lane = {
@@ -112,10 +115,12 @@ function buildPath(
   return samples.map((sample) => `${xScale(sample.device_ms).toFixed(2)},${yScale(getValue(sample, key)).toFixed(2)}`).join(" ");
 }
 
-function Timeline({ samples, labels }: TimelineProps) {
+function Timeline({ samples, labels, isSelectionMode, onRangeSelected, selectedRange }: TimelineProps) {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const [viewRange, setViewRange] = useState<[number, number] | null>(null);
   const [dragStart, setDragStart] = useState<{ pointerX: number; range: [number, number] } | null>(null);
+  const [selectionDrag, setSelectionDrag] = useState<number | null>(null);
+  const [selectionDraft, setSelectionDraft] = useState<SelectionRange | null>(null);
 
   const domain = useMemo<[number, number] | null>(() => {
     if (samples.length === 0) {
@@ -178,10 +183,24 @@ function Timeline({ samples, labels }: TimelineProps) {
 
   function handlePointerDown(event: React.PointerEvent<SVGSVGElement>) {
     svgRef.current?.setPointerCapture(event.pointerId);
+    if (isSelectionMode) {
+      const startMs = Math.round(pointerToDeviceMs(event.clientX));
+      setSelectionDrag(startMs);
+      setSelectionDraft({ startDeviceMs: startMs, endDeviceMs: startMs });
+      return;
+    }
     setDragStart({ pointerX: event.clientX, range: activeRange });
   }
 
   function handlePointerMove(event: React.PointerEvent<SVGSVGElement>) {
+    if (selectionDrag !== null) {
+      const currentMs = Math.round(pointerToDeviceMs(event.clientX));
+      setSelectionDraft({
+        startDeviceMs: Math.min(selectionDrag, currentMs),
+        endDeviceMs: Math.max(selectionDrag, currentMs),
+      });
+      return;
+    }
     if (!dragStart) {
       return;
     }
@@ -196,10 +215,16 @@ function Timeline({ samples, labels }: TimelineProps) {
 
   function handlePointerUp(event: React.PointerEvent<SVGSVGElement>) {
     svgRef.current?.releasePointerCapture(event.pointerId);
+    if (selectionDraft && selectionDraft.endDeviceMs > selectionDraft.startDeviceMs) {
+      onRangeSelected(selectionDraft);
+    }
+    setSelectionDrag(null);
+    setSelectionDraft(null);
     setDragStart(null);
   }
 
   const ticks = Array.from({ length: 6 }, (_, index) => viewStart + ((viewEnd - viewStart) * index) / 5);
+  const visibleSelection = selectionDraft ?? selectedRange;
 
   return (
     <div className="timeline-card">
@@ -247,6 +272,21 @@ function Timeline({ samples, labels }: TimelineProps) {
             </g>
           );
         })}
+
+        {visibleSelection && visibleSelection.endDeviceMs >= viewStart && visibleSelection.startDeviceMs <= viewEnd ? (
+          <rect
+            className="selection-overlay"
+            height={LANES.length * LANE_HEIGHT}
+            rx={10}
+            width={Math.max(
+              3,
+              Math.min(WIDTH - RIGHT_PAD, xScale(visibleSelection.endDeviceMs)) -
+                Math.max(LEFT_PAD, xScale(visibleSelection.startDeviceMs)),
+            )}
+            x={Math.max(LEFT_PAD, xScale(visibleSelection.startDeviceMs))}
+            y={TOP_PAD}
+          />
+        ) : null}
 
         {LANES.map((lane, laneIndex) => {
           const laneTop = TOP_PAD + laneIndex * LANE_HEIGHT;

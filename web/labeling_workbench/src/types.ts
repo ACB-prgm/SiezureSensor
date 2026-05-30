@@ -9,6 +9,28 @@ export type EventType =
   | "resting"
   | "unknown";
 
+export const EVENT_TYPES: EventType[] = [
+  "seizure",
+  "sleep_twitch",
+  "scratching",
+  "scooting",
+  "shake_off",
+  "walking",
+  "running",
+  "resting",
+  "unknown",
+];
+
+export type EventPayload = {
+  session_id: string;
+  event_type: EventType;
+  severity: number | null;
+  start_device_ms: number;
+  end_device_ms: number;
+  source: string;
+  notes: string | null;
+};
+
 export type SessionSummary = {
   session_id: string;
   device_id: string;
@@ -51,4 +73,9 @@ export type EventLabel = {
   source: string;
   notes: string | null;
   created_at: string;
+};
+
+export type SelectionRange = {
+  startDeviceMs: number;
+  endDeviceMs: number;
 };
