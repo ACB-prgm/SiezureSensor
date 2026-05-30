@@ -106,14 +106,16 @@ Initial label categories should include:
 
 ### Sliding-Window Dataset
 
-The first practical model should be a sliding-window categorical classifier. Raw IMU samples are converted into fixed-size windows, then each window receives one category label based on overlap with human event windows.
+The first practical model should be a hierarchical, feature-based sliding-window system. Raw IMU samples are converted into fixed-size windows, engineered features are extracted, and model outputs are smoothed into reviewable segments.
 
 Recommended initial window settings:
 
 - sample rate: 50 Hz
-- window sizes to evaluate: 2 seconds / 100 samples and 5 seconds / 250 samples
-- stride: 50 percent overlap by default
-- prediction cadence: one prediction every 1 second for 2 second windows, or every 2.5 seconds for 5 second windows
+- primary activity window: 2 seconds / 100 samples
+- primary stride: 0.5 seconds / 25 samples
+- context window: 5 seconds / 250 samples
+- context stride: 1 second / 50 samples
+- optional seizure-like candidate aggregation horizon: 9-10 seconds
 
 Each generated window should include:
 
@@ -131,21 +133,31 @@ ax/ay/az/gx/gy/gz samples or derived features
 
 Window label assignment rules:
 
-- If a window strongly overlaps one human label, assign that event type.
+- If a window overlaps one human label by at least 80 percent, assign that event type.
 - If a window overlaps multiple incompatible labels, mark it `mixed` or exclude it from training.
 - If a window has no human label, keep it `unlabeled` unless the user explicitly labeled the period as `resting`, `walking`, or another normal activity.
 - Do not treat unlabeled time as normal by default.
 - Split train/test data by session, not by random rows, to reduce leakage.
+- Keep all windows from the same labeled event in the same train/test partition.
 
 ### Model Path
 
 The first model should be simple and debuggable:
 
 1. Generate sliding windows from labeled sessions.
-2. Extract per-window features such as accel magnitude mean/std/max, gyro magnitude mean/std/max, axis variance, jerk, and simple frequency-domain energy.
-3. Train a baseline classifier such as RandomForest, gradient boosting, or logistic regression.
-4. Compare against a later raw-window model such as a 1D CNN only after enough labeled data exists.
-5. Smooth predictions over time before turning them into event spans.
+2. Extract per-window features such as accel magnitude mean/std/max, gyro magnitude mean/std/max, axis variance, jerk, RMS, percentiles, peak counts, and simple frequency-domain energy.
+3. Train a RandomForest reference model.
+4. Evaluate LightGBM or XGBoost on the same feature matrix.
+5. Keep logistic regression and SVM as sanity-check baselines.
+6. Compare against a later raw-window model such as a 1D CNN or TCN only after enough labeled data exists.
+7. Smooth predictions over time before turning them into event spans.
+
+Use two heads rather than one flat classifier:
+
+- General activity head for `resting`, `walking`, `running`, `scratching`, `scooting`, `shake_off`, and `sleep_twitch`.
+- Rare-event candidate head for `seizure` or seizure-like periods, optimized for high-recall human review and measured with false positives per hour.
+
+Seizure-like output should be treated as candidate review support, not reliable medical alerting.
 
 Future model predictions should be stored separately from human labels. A prediction record should include:
 

@@ -90,7 +90,7 @@ Rationale:
 - Human labels should be time ranges, because the future model will classify fixed-size sliding windows.
 - Building this before collecting many long sessions prevents unlabeled data debt.
 
-## Sprint 5: Sliding-Window Dataset Prep
+## Sprint 5: Multi-Scale Dataset and Feature Prep
 
 Milestones:
 
@@ -99,16 +99,17 @@ Milestones:
 Outcome:
 
 - Human-labeled time ranges can be converted into fixed-size model examples.
-- Initial supported windows are 2 seconds / 100 samples and 5 seconds / 250 samples at 50 Hz.
-- Window labels are assigned by overlap with human event windows.
+- Initial supported windows are 2 seconds / 100 samples with 0.5 second stride and 5 seconds / 250 samples with 1 second stride at 50 Hz.
+- Window labels are assigned by at least 80 percent overlap with human event windows.
 - Unlabeled time remains `unlabeled` unless explicitly labeled as resting, walking, or another activity.
 - Mixed-overlap windows are marked or excluded by documented rules.
-- Baseline feature CSVs can be exported for future model training.
+- Baseline feature CSVs can be exported for RandomForest and LightGBM/XGBoost model experiments.
+- Evaluation guidance prevents leakage by splitting by session/day/dog before window generation.
 
 Rationale:
 
 - The model design should drive the labeling semantics before training starts.
-- A simple sliding-window dataset gives a clear path from raw IMU data to categorical classifiers.
+- A multi-scale feature dataset gives a clear path from raw IMU data to a debuggable hierarchical classifier.
 
 ## Sprint 6: Long-Run Validation
 

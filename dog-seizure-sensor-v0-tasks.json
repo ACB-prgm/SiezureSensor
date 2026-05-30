@@ -559,7 +559,7 @@
     },
     {
       "id": "M10",
-      "name": "Sliding-Window Dataset Preparation",
+      "name": "Multi-Scale Dataset and Feature Preparation",
       "tasks": [
         {
           "id": "M10.1",
@@ -574,8 +574,8 @@
           "acceptance_criteria": [
             "Script reads one or more labeled sessions from SQLite.",
             "Script supports configurable --window-ms and --stride-ms.",
-            "Script can generate 2 second / 100 sample windows for 50 Hz data.",
-            "Script can generate 5 second / 250 sample windows for 50 Hz data.",
+            "Script can generate 2 second / 100 sample windows with 0.5 second stride for 50 Hz data.",
+            "Script can generate 5 second / 250 sample context windows with 1 second stride for 50 Hz data.",
             "Output includes session_id, device_id, window_start_device_ms, window_end_device_ms, label, and overlap_ratio."
           ],
           "plan_ref": "M10 - Task M10.1"
@@ -590,16 +590,17 @@
             "analysis/scripts/build_windows.py"
           ],
           "acceptance_criteria": [
-            "Windows strongly overlapping one human label receive that event type.",
+            "Windows overlapping one human label by at least 80 percent receive that event type.",
             "Unlabeled windows remain unlabeled and are not treated as resting or normal.",
             "Windows overlapping multiple incompatible labels are marked mixed or excluded by a documented option.",
-            "Train/test guidance preserves session-level splits instead of random row splits."
+            "Train/test guidance preserves session/day/dog-level splits instead of random row splits.",
+            "All windows from the same labeled event remain in the same train/test partition."
           ],
           "plan_ref": "M10 - Task M10.2"
         },
         {
           "id": "M10.3",
-          "title": "Add baseline feature extraction",
+          "title": "Add baseline feature extraction for feature models",
           "dependencies": [
             "M10.2"
           ],
@@ -609,8 +610,10 @@
           "acceptance_criteria": [
             "Feature output includes accel and gyro magnitude statistics.",
             "Feature output includes per-axis summary statistics.",
+            "Feature output includes jerk, RMS, percentile, signal-energy, and peak-count style features where practical.",
             "Generated feature CSV opens in pandas.",
-            "Feature generation is reproducible from the raw SQLite database."
+            "Feature generation is reproducible from the raw SQLite database.",
+            "Feature matrix is suitable for RandomForest first and LightGBM/XGBoost comparison later."
           ],
           "plan_ref": "M10 - Task M10.3"
         },
@@ -624,9 +627,11 @@
             "docs/model_and_labeling_design.md"
           ],
           "acceptance_criteria": [
-            "Document explains human label semantics and sliding-window settings.",
+            "Document explains human label semantics and multi-scale sliding-window settings.",
             "Document explains overlap label assignment rules.",
             "Document explains why unlabeled time is not normal by default.",
+            "Document recommends RandomForest first with LightGBM/XGBoost comparison.",
+            "Document defines general activity and seizure-like candidate review heads.",
             "Document describes future prediction review workflow."
           ],
           "plan_ref": "M10 - Task M10.4"
