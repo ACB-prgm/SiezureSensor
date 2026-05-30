@@ -68,6 +68,18 @@ def test_missing_session_returns_404(client):
   assert response.status_code == 404
 
 
+def test_overlapping_event_creation_returns_409(client):
+  create_session(client)
+  assert client.post("/api/v1/events", json=valid_event_payload()).status_code == 201
+  overlapping = valid_event_payload()
+  overlapping["start_device_ms"] = 184250
+  overlapping["end_device_ms"] = 184350
+
+  response = client.post("/api/v1/events", json=overlapping)
+
+  assert response.status_code == 409
+
+
 def test_event_listing_returns_created_events(client):
   create_session(client)
   first = valid_event_payload()
@@ -153,6 +165,22 @@ def test_patch_event_rejects_invalid_payloads(client):
   assert invalid_severity.status_code == 422
   assert invalid_range.status_code == 422
   assert missing_session.status_code == 404
+
+
+def test_patch_event_rejects_overlap(client):
+  create_session(client)
+  first = client.post("/api/v1/events", json=valid_event_payload()).json()
+  second = valid_event_payload()
+  second["start_device_ms"] = 184400
+  second["end_device_ms"] = 184500
+  second_id = client.post("/api/v1/events", json=second).json()["id"]
+
+  response = client.patch(
+    f"/api/v1/events/{second_id}",
+    json={"start_device_ms": first["start_device_ms"] + 10, "end_device_ms": first["end_device_ms"] + 10},
+  )
+
+  assert response.status_code == 409
 
 
 def test_patch_missing_event_returns_404(client):

@@ -90,6 +90,15 @@ class SessionSummaryOut(BaseModel):
   last_server_received_at: str | None = None
 
 
+class SessionCreateIn(BaseModel):
+  session_id: str = Field(min_length=1)
+  device_id: str = Field(min_length=1)
+  started_at: str | None = None
+  ended_at: str | None = None
+  mount_location: str | None = None
+  notes: str | None = None
+
+
 class SessionSampleOut(BaseModel):
   device_id: str
   session_id: str

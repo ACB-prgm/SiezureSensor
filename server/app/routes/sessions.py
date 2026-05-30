@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from math import sqrt
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -5,11 +6,15 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session as OrmSession
 
 from app.database import get_db
-from app.models import Batch, IMUSample, Session
-from app.schemas import SessionSampleOut, SessionSummaryOut
+from app.models import Batch, Device, IMUSample, Session
+from app.schemas import SessionCreateIn, SessionSampleOut, SessionSummaryOut
 
 
 router = APIRouter(prefix="/api/v1/sessions", tags=["sessions"])
+
+
+def now_iso() -> str:
+  return datetime.now(UTC).isoformat()
 
 
 def sample_to_out(sample: IMUSample) -> SessionSampleOut:
@@ -65,6 +70,38 @@ def summarize_session(db: OrmSession, session: Session) -> SessionSummaryOut:
 def list_sessions(db: OrmSession = Depends(get_db)) -> list[SessionSummaryOut]:
   sessions = db.query(Session).order_by(Session.session_id).all()
   return [summarize_session(db, session) for session in sessions]
+
+
+@router.post("", response_model=SessionSummaryOut, status_code=status.HTTP_201_CREATED)
+def create_session(payload: SessionCreateIn, db: OrmSession = Depends(get_db)) -> SessionSummaryOut:
+  if db.get(Session, payload.session_id) is not None:
+    raise HTTPException(
+      status_code=status.HTTP_409_CONFLICT,
+      detail="Session already exists",
+    )
+
+  if db.get(Device, payload.device_id) is None:
+    db.add(
+      Device(
+        device_id=payload.device_id,
+        firmware_version=None,
+        created_at=now_iso(),
+      )
+    )
+
+  session = Session(
+    session_id=payload.session_id,
+    device_id=payload.device_id,
+    started_at=payload.started_at,
+    ended_at=payload.ended_at,
+    mount_location=payload.mount_location,
+    notes=payload.notes,
+  )
+  db.add(session)
+  db.commit()
+  db.refresh(session)
+
+  return summarize_session(db, session)
 
 
 @router.get("/{session_id}/samples", response_model=list[SessionSampleOut])

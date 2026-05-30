@@ -29,12 +29,34 @@ def event_to_out(event: Event) -> EventOut:
   )
 
 
+def has_overlapping_event(
+  db: OrmSession,
+  session_id: str,
+  start_device_ms: int,
+  end_device_ms: int,
+  exclude_event_id: int | None = None,
+) -> bool:
+  query = db.query(Event).filter(
+    Event.session_id == session_id,
+    Event.start_device_ms < end_device_ms,
+    Event.end_device_ms > start_device_ms,
+  )
+  if exclude_event_id is not None:
+    query = query.filter(Event.id != exclude_event_id)
+  return bool(db.query(query.exists()).scalar())
+
+
 @router.post("", response_model=EventOut, status_code=status.HTTP_201_CREATED)
 def create_event(payload: EventIn, db: OrmSession = Depends(get_db)) -> EventOut:
   if db.get(Session, payload.session_id) is None:
     raise HTTPException(
       status_code=status.HTTP_404_NOT_FOUND,
       detail="Session not found",
+    )
+  if has_overlapping_event(db, payload.session_id, payload.start_device_ms, payload.end_device_ms):
+    raise HTTPException(
+      status_code=status.HTTP_409_CONFLICT,
+      detail="Event overlaps an existing label",
     )
 
   event = Event(
@@ -98,6 +120,11 @@ def update_event(event_id: int, payload: EventUpdate, db: OrmSession = Depends(g
     raise HTTPException(
       status_code=422,
       detail="start_device_ms must be less than end_device_ms",
+    )
+  if has_overlapping_event(db, next_session_id, next_start_device_ms, next_end_device_ms, exclude_event_id=event_id):
+    raise HTTPException(
+      status_code=status.HTTP_409_CONFLICT,
+      detail="Event overlaps an existing label",
     )
 
   event.session_id = next_session_id

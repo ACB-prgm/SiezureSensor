@@ -1,6 +1,35 @@
 from tests.test_export import insert_batch
 
 
+def test_create_session_succeeds_with_new_device(client):
+  response = client.post(
+    "/api/v1/sessions",
+    json={
+      "session_id": "manual-session",
+      "device_id": "beanie-v0-002",
+      "mount_location": "collar",
+      "notes": "manual setup",
+    },
+  )
+
+  assert response.status_code == 201
+  body = response.json()
+  assert body["session_id"] == "manual-session"
+  assert body["device_id"] == "beanie-v0-002"
+  assert body["mount_location"] == "collar"
+  assert body["sample_count"] == 0
+  assert body["batch_count"] == 0
+
+
+def test_create_session_rejects_duplicate_session_id(client):
+  payload = {"session_id": "manual-session", "device_id": "beanie-v0-002"}
+  assert client.post("/api/v1/sessions", json=payload).status_code == 201
+
+  response = client.post("/api/v1/sessions", json=payload)
+
+  assert response.status_code == 409
+
+
 def test_list_sessions_returns_metadata(client):
   insert_batch(client, "session-a", 1, device_ms_start=1000)
   insert_batch(client, "session-b", 2, device_ms_start=2000)
