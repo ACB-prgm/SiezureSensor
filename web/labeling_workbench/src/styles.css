@@ -361,6 +361,7 @@ dd {
   border-radius: 18px;
   background: #fbf8ef;
   cursor: grab;
+  overscroll-behavior: contain;
   touch-action: none;
 }
 

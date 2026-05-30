@@ -156,7 +156,7 @@ function Timeline({
   const [selectionDrag, setSelectionDrag] = useState<number | null>(null);
   const [handleDrag, setHandleDrag] = useState<"start" | "end" | null>(null);
   const [selectionDraft, setSelectionDraft] = useState<SelectionRange | null>(null);
-  const [verticalScale, setVerticalScale] = useState(1);
+  const [signalScale, setSignalScale] = useState(1);
 
   const domain = useMemo<[number, number] | null>(() => {
     if (samples.length === 0) {
@@ -183,6 +183,51 @@ function Timeline({
     const [start, end] = currentRange;
     return samples.filter((sample) => sample.device_ms >= start && sample.device_ms <= end);
   }, [currentRange, samples]);
+
+  useEffect(() => {
+    const node = svgRef.current;
+    if (!node || !domain || !currentRange) {
+      return undefined;
+    }
+
+    const svgNode = node;
+    const [domainStartMs, domainEndMs] = domain;
+    const [viewStartMs, viewEndMs] = currentRange;
+    const fullSpan = domainEndMs - domainStartMs;
+    const activeSpan = viewEndMs - viewStartMs;
+    const plotWidth = WIDTH - LEFT_PAD - RIGHT_PAD;
+
+    function setClampedWheelRange(start: number, end: number) {
+      setViewRange(clampRange(start, end, domainStartMs, domainEndMs));
+    }
+
+    function pointerToWheelMs(clientX: number): number {
+      const rect = svgNode.getBoundingClientRect();
+      const svgX = ((clientX - rect.left) / rect.width) * WIDTH;
+      const ratio = Math.min(1, Math.max(0, (svgX - LEFT_PAD) / plotWidth));
+      return viewStartMs + ratio * activeSpan;
+    }
+
+    function handleNativeWheel(event: WheelEvent) {
+      event.preventDefault();
+      event.stopPropagation();
+
+      if (Math.abs(event.deltaX) > Math.abs(event.deltaY) || event.shiftKey) {
+        const deltaMs = event.deltaX * (activeSpan / plotWidth);
+        setClampedWheelRange(viewStartMs + deltaMs, viewEndMs + deltaMs);
+        return;
+      }
+
+      const focus = pointerToWheelMs(event.clientX);
+      const nextSpan = Math.min(fullSpan, Math.max(MIN_SPAN_MS, activeSpan * (event.deltaY < 0 ? 0.78 : 1.28)));
+      const focusRatio = (focus - viewStartMs) / activeSpan;
+      const nextStart = focus - nextSpan * focusRatio;
+      setClampedWheelRange(nextStart, nextStart + nextSpan);
+    }
+
+    svgNode.addEventListener("wheel", handleNativeWheel, { passive: false });
+    return () => svgNode.removeEventListener("wheel", handleNativeWheel);
+  }, [currentRange, domain]);
 
   if (!domain || !currentRange) {
     return (
@@ -225,20 +270,6 @@ function Timeline({
     const focusRatio = (focus - viewStart) / viewSpan;
     const nextStart = focus - nextSpan * focusRatio;
     setClampedViewRange(nextStart, nextStart + nextSpan);
-  }
-
-  function panBy(deltaMs: number) {
-    setClampedViewRange(viewStart + deltaMs, viewEnd + deltaMs);
-  }
-
-  function handleWheel(event: React.WheelEvent<SVGSVGElement>) {
-    event.preventDefault();
-    if (Math.abs(event.deltaX) > Math.abs(event.deltaY) || event.shiftKey) {
-      panBy(event.deltaX * (viewSpan / plotWidth));
-      return;
-    }
-    const focus = pointerToDeviceMs(event.clientX);
-    zoomAround(focus, event.deltaY < 0 ? 0.78 : 1.28);
   }
 
   function handlePointerDown(event: React.PointerEvent<SVGSVGElement>) {
@@ -344,16 +375,16 @@ function Timeline({
           />
         </label>
         <label>
-          Vertical scale
+          Signal amplitude
           <input
             max={300}
             min={50}
-            onChange={(event) => setVerticalScale(Number(event.target.value) / 100)}
+            onChange={(event) => setSignalScale(Number(event.target.value) / 100)}
             step={5}
             type="range"
-            value={verticalScale * 100}
+            value={signalScale * 100}
           />
-          <span>{Math.round(verticalScale * 100)}%</span>
+          <span>{Math.round(signalScale * 100)}% trace height</span>
         </label>
       </div>
 
@@ -368,7 +399,6 @@ function Timeline({
         }}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
-        onWheel={handleWheel}
         ref={svgRef}
         role="img"
         viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
@@ -434,7 +464,7 @@ function Timeline({
           const maxValue = Math.max(...allValues);
           const rawPadding = Math.max(0.1, (maxValue - minValue) * 0.12);
           const rawMid = (maxValue + minValue) / 2;
-          const rawHalfSpan = Math.max(0.1, (maxValue - minValue) / 2 + rawPadding) / verticalScale;
+          const rawHalfSpan = Math.max(0.1, (maxValue - minValue) / 2 + rawPadding) / signalScale;
           const yMin = rawMid - rawHalfSpan;
           const yMax = rawMid + rawHalfSpan;
           const yScale = (value: number) =>
