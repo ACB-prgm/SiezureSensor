@@ -130,9 +130,36 @@ def list_session_samples(
   if end_device_ms is not None:
     query = query.filter(IMUSample.device_ms <= end_device_ms)
 
-  samples = query.order_by(IMUSample.device_ms, IMUSample.sample_index).all()
-  if len(samples) > max_points:
-    step = max(1, len(samples) // max_points)
-    samples = samples[::step][:max_points]
+  total_samples = query.count()
+  if total_samples > max_points:
+    tail_count = min(5000, max(1, max_points // 4))
+    tail_samples = query.order_by(IMUSample.id.desc()).limit(tail_count).all()
+    oldest_tail_id = min((sample.id for sample in tail_samples), default=None)
+    older_query = query.filter(IMUSample.id < oldest_tail_id) if oldest_tail_id is not None else query
+    remaining_points = max(0, max_points - len(tail_samples))
+    samples = []
+
+    if remaining_points > 0:
+      first_sample = older_query.order_by(IMUSample.id).first()
+      if first_sample:
+        samples.append(first_sample)
+
+    if remaining_points > 1:
+      older_total = older_query.count()
+      step = max(1, older_total // remaining_points)
+      middle_samples = (
+        older_query.filter(IMUSample.id % step == 0)
+        .order_by(IMUSample.id)
+        .limit(remaining_points - 1)
+        .all()
+      )
+      samples.extend(middle_samples)
+
+    samples.extend(tail_samples)
+
+    samples_by_id = {sample.id: sample for sample in samples if sample is not None}
+    samples = sorted(samples_by_id.values(), key=lambda sample: sample.id)
+  else:
+    samples = query.order_by(IMUSample.id).all()
 
   return [sample_to_out(sample) for sample in samples]

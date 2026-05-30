@@ -118,15 +118,35 @@ function getValue(sample: SessionSample, key: keyof SessionSample): number {
 function buildPath(
   samples: SessionSample[],
   key: keyof SessionSample,
-  xScale: (deviceMs: number) => number,
+  xScale: (timeMs: number) => number,
   yScale: (value: number) => number,
 ): string {
-  return samples.map((sample) => `${xScale(sample.device_ms).toFixed(2)},${yScale(getValue(sample, key)).toFixed(2)}`).join(" ");
+  return samples.map((sample) => `${xScale(sampleTimeMs(sample)).toFixed(2)},${yScale(getValue(sample, key)).toFixed(2)}`).join(" ");
 }
 
-function nearestSampleDate(samples: SessionSample[], deviceMs: number): Date {
+function sampleTimeMs(sample: SessionSample): number {
+  return new Date(sample.server_received_at).getTime();
+}
+
+function nearestSampleByTime(samples: SessionSample[], timeMs: number): SessionSample | null {
   if (samples.length === 0) {
-    return new Date();
+    return null;
+  }
+  let nearest = samples[0];
+  let nearestDistance = Math.abs(sampleTimeMs(nearest) - timeMs);
+  for (const sample of samples) {
+    const distance = Math.abs(sampleTimeMs(sample) - timeMs);
+    if (distance < nearestDistance) {
+      nearest = sample;
+      nearestDistance = distance;
+    }
+  }
+  return nearest;
+}
+
+function nearestTimeForDeviceMs(samples: SessionSample[], deviceMs: number): number | null {
+  if (samples.length === 0) {
+    return null;
   }
   let nearest = samples[0];
   let nearestDistance = Math.abs(nearest.device_ms - deviceMs);
@@ -137,7 +157,16 @@ function nearestSampleDate(samples: SessionSample[], deviceMs: number): Date {
       nearestDistance = distance;
     }
   }
-  return new Date(nearest.server_received_at);
+  return sampleTimeMs(nearest);
+}
+
+function timeRangeForDeviceRange(samples: SessionSample[], range: SelectionRange): [number, number] | null {
+  const startTime = nearestTimeForDeviceMs(samples, range.startDeviceMs);
+  const endTime = nearestTimeForDeviceMs(samples, range.endDeviceMs);
+  if (startTime === null || endTime === null) {
+    return null;
+  }
+  return [Math.min(startTime, endTime), Math.max(startTime, endTime)];
 }
 
 function Timeline({
@@ -153,27 +182,51 @@ function Timeline({
   const svgRef = useRef<SVGSVGElement | null>(null);
   const [viewRange, setViewRange] = useState<[number, number] | null>(null);
   const [dragStart, setDragStart] = useState<{ pointerX: number; range: [number, number] } | null>(null);
-  const [selectionDrag, setSelectionDrag] = useState<number | null>(null);
+  const [selectionDrag, setSelectionDrag] = useState<{ timeMs: number; deviceMs: number } | null>(null);
   const [handleDrag, setHandleDrag] = useState<"start" | "end" | null>(null);
   const [selectionDraft, setSelectionDraft] = useState<SelectionRange | null>(null);
+  const [selectionTimeDraft, setSelectionTimeDraft] = useState<[number, number] | null>(null);
   const [signalScale, setSignalScale] = useState(1);
 
+  const timelineSamples = useMemo(
+    () =>
+      [...samples].sort((left, right) => {
+        const timeDelta = sampleTimeMs(left) - sampleTimeMs(right);
+        if (timeDelta !== 0) {
+          return timeDelta;
+        }
+        return left.sample_index - right.sample_index;
+      }),
+    [samples],
+  );
+
   const domain = useMemo<[number, number] | null>(() => {
-    if (samples.length === 0) {
+    if (timelineSamples.length === 0) {
       return null;
     }
-    return [samples[0].device_ms, samples[samples.length - 1].device_ms];
-  }, [samples]);
+    return [sampleTimeMs(timelineSamples[0]), sampleTimeMs(timelineSamples[timelineSamples.length - 1])];
+  }, [timelineSamples]);
 
   useEffect(() => {
-    setViewRange(domain);
+    setViewRange((current) => {
+      if (!domain) {
+        return null;
+      }
+      if (!current) {
+        return domain;
+      }
+      return clampRange(current[0], current[1], domain[0], domain[1]);
+    });
   }, [domain]);
 
   useEffect(() => {
     if (domain && focusRange) {
-      setViewRange(clampRange(focusRange.startDeviceMs, focusRange.endDeviceMs, domain[0], domain[1]));
+      const timeRange = timeRangeForDeviceRange(timelineSamples, focusRange);
+      if (timeRange) {
+        setViewRange(clampRange(timeRange[0], timeRange[1], domain[0], domain[1]));
+      }
     }
-  }, [domain, focusRange]);
+  }, [domain, focusRange, timelineSamples]);
 
   const currentRange = viewRange ?? domain;
   const visibleSamples = useMemo(() => {
@@ -181,8 +234,11 @@ function Timeline({
       return [];
     }
     const [start, end] = currentRange;
-    return samples.filter((sample) => sample.device_ms >= start && sample.device_ms <= end);
-  }, [currentRange, samples]);
+    return timelineSamples.filter((sample) => {
+      const timeMs = sampleTimeMs(sample);
+      return timeMs >= start && timeMs <= end;
+    });
+  }, [currentRange, timelineSamples]);
 
   useEffect(() => {
     const node = svgRef.current;
@@ -251,11 +307,11 @@ function Timeline({
     setViewRange(clampRange(start, end, domainStart, domainEnd));
   }
 
-  function xScale(deviceMs: number): number {
-    return LEFT_PAD + ((deviceMs - viewStart) / viewSpan) * plotWidth;
+  function xScale(timeMs: number): number {
+    return LEFT_PAD + ((timeMs - viewStart) / viewSpan) * plotWidth;
   }
 
-  function pointerToDeviceMs(clientX: number): number {
+  function pointerToTimeMs(clientX: number): number {
     const rect = svgRef.current?.getBoundingClientRect();
     if (!rect) {
       return viewStart;
@@ -272,43 +328,65 @@ function Timeline({
     setClampedViewRange(nextStart, nextStart + nextSpan);
   }
 
+  function jumpToLatest() {
+    const latestSpan = Math.min(totalSpan, Math.max(MIN_SPAN_MS, Math.min(viewSpan, 120_000)));
+    setClampedViewRange(domainEnd - latestSpan, domainEnd);
+  }
+
   function handlePointerDown(event: React.PointerEvent<SVGSVGElement>) {
     event.preventDefault();
     svgRef.current?.setPointerCapture(event.pointerId);
-    const pointerMs = Math.round(pointerToDeviceMs(event.clientX));
+    const pointerTimeMs = Math.round(pointerToTimeMs(event.clientX));
+    const pointerSample = nearestSampleByTime(timelineSamples, pointerTimeMs);
+    const pointerDeviceMs = pointerSample?.device_ms ?? 0;
     const handleToleranceMs = viewSpan * 0.012;
+    const selectedTimeRange = selectedRange ? timeRangeForDeviceRange(timelineSamples, selectedRange) : null;
 
-    if (selectedRange && Math.abs(pointerMs - selectedRange.startDeviceMs) <= handleToleranceMs) {
+    if (selectedTimeRange && Math.abs(pointerTimeMs - selectedTimeRange[0]) <= handleToleranceMs) {
       setHandleDrag("start");
       return;
     }
-    if (selectedRange && Math.abs(pointerMs - selectedRange.endDeviceMs) <= handleToleranceMs) {
+    if (selectedTimeRange && Math.abs(pointerTimeMs - selectedTimeRange[1]) <= handleToleranceMs) {
       setHandleDrag("end");
       return;
     }
     if (isSelectionMode) {
-      setSelectionDrag(pointerMs);
-      setSelectionDraft({ startDeviceMs: pointerMs, endDeviceMs: pointerMs });
+      setSelectionDrag({ timeMs: pointerTimeMs, deviceMs: pointerDeviceMs });
+      setSelectionDraft({ startDeviceMs: pointerDeviceMs, endDeviceMs: pointerDeviceMs });
+      setSelectionTimeDraft([pointerTimeMs, pointerTimeMs]);
       return;
     }
     setDragStart({ pointerX: event.clientX, range: activeRange });
   }
 
   function handlePointerMove(event: React.PointerEvent<SVGSVGElement>) {
-    const currentMs = Math.round(pointerToDeviceMs(event.clientX));
+    const currentTimeMs = Math.round(pointerToTimeMs(event.clientX));
+    const currentSample = nearestSampleByTime(timelineSamples, currentTimeMs);
+    const currentDeviceMs = currentSample?.device_ms ?? 0;
     if (handleDrag && selectedRange) {
       const nextRange =
         handleDrag === "start"
-          ? { startDeviceMs: Math.min(currentMs, selectedRange.endDeviceMs - 1), endDeviceMs: selectedRange.endDeviceMs }
-          : { startDeviceMs: selectedRange.startDeviceMs, endDeviceMs: Math.max(currentMs, selectedRange.startDeviceMs + 1) };
+          ? { startDeviceMs: Math.min(currentDeviceMs, selectedRange.endDeviceMs - 1), endDeviceMs: selectedRange.endDeviceMs }
+          : { startDeviceMs: selectedRange.startDeviceMs, endDeviceMs: Math.max(currentDeviceMs, selectedRange.startDeviceMs + 1) };
+      const currentTimeRange = timeRangeForDeviceRange(timelineSamples, selectedRange);
+      if (currentTimeRange) {
+        setSelectionTimeDraft(
+          handleDrag === "start"
+            ? [Math.min(currentTimeMs, currentTimeRange[1]), currentTimeRange[1]]
+            : [currentTimeRange[0], Math.max(currentTimeMs, currentTimeRange[0])],
+        );
+      }
       onSelectedRangeChange(nextRange);
       return;
     }
     if (selectionDrag !== null) {
+      const startDeviceMs = selectionDrag.deviceMs;
+      const endDeviceMs = currentDeviceMs;
       setSelectionDraft({
-        startDeviceMs: Math.min(selectionDrag, currentMs),
-        endDeviceMs: Math.max(selectionDrag, currentMs),
+        startDeviceMs: Math.min(startDeviceMs, endDeviceMs),
+        endDeviceMs: Math.max(startDeviceMs, endDeviceMs),
       });
+      setSelectionTimeDraft([Math.min(selectionDrag.timeMs, currentTimeMs), Math.max(selectionDrag.timeMs, currentTimeMs)]);
       return;
     }
     if (!dragStart) {
@@ -330,12 +408,14 @@ function Timeline({
     }
     setSelectionDrag(null);
     setSelectionDraft(null);
+    setSelectionTimeDraft(null);
     setHandleDrag(null);
     setDragStart(null);
   }
 
   const ticks = Array.from({ length: 6 }, (_, index) => viewStart + (viewSpan * index) / 5);
   const visibleSelection = selectionDraft ?? selectedRange;
+  const visibleSelectionTimeRange = selectionTimeDraft ?? (visibleSelection ? timeRangeForDeviceRange(timelineSamples, visibleSelection) : null);
 
   return (
     <div className="timeline-card">
@@ -354,6 +434,9 @@ function Timeline({
           </button>
           <button type="button" onClick={() => setViewRange(domain)}>
             Reset
+          </button>
+          <button type="button" onClick={jumpToLatest}>
+            Latest
           </button>
         </div>
       </div>
@@ -395,6 +478,7 @@ function Timeline({
         onPointerLeave={() => {
           setDragStart(null);
           setSelectionDrag(null);
+          setSelectionTimeDraft(null);
           setHandleDrag(null);
         }}
         onPointerMove={handlePointerMove}
@@ -405,11 +489,15 @@ function Timeline({
       >
         <rect className="timeline-background" height={HEIGHT} width={WIDTH} x={0} y={0} />
         {labels.map((label) => {
-          if (label.end_device_ms < viewStart || label.start_device_ms > viewEnd) {
+          const labelTimeRange = timeRangeForDeviceRange(timelineSamples, {
+            startDeviceMs: label.start_device_ms,
+            endDeviceMs: label.end_device_ms,
+          });
+          if (!labelTimeRange || labelTimeRange[1] < viewStart || labelTimeRange[0] > viewEnd) {
             return null;
           }
-          const x = Math.max(LEFT_PAD, xScale(label.start_device_ms));
-          const width = Math.max(2, Math.min(WIDTH - RIGHT_PAD, xScale(label.end_device_ms)) - x);
+          const x = Math.max(LEFT_PAD, xScale(labelTimeRange[0]));
+          const width = Math.max(2, Math.min(WIDTH - RIGHT_PAD, xScale(labelTimeRange[1])) - x);
           return (
             <g key={label.id}>
               <rect
@@ -428,7 +516,7 @@ function Timeline({
           );
         })}
 
-        {visibleSelection && visibleSelection.endDeviceMs >= viewStart && visibleSelection.startDeviceMs <= viewEnd ? (
+        {visibleSelection && visibleSelectionTimeRange && visibleSelectionTimeRange[1] >= viewStart && visibleSelectionTimeRange[0] <= viewEnd ? (
           <g>
             <rect
               className="selection-overlay"
@@ -436,21 +524,21 @@ function Timeline({
               rx={10}
               width={Math.max(
                 3,
-                Math.min(WIDTH - RIGHT_PAD, xScale(visibleSelection.endDeviceMs)) -
-                  Math.max(LEFT_PAD, xScale(visibleSelection.startDeviceMs)),
+                Math.min(WIDTH - RIGHT_PAD, xScale(visibleSelectionTimeRange[1])) -
+                  Math.max(LEFT_PAD, xScale(visibleSelectionTimeRange[0])),
               )}
-              x={Math.max(LEFT_PAD, xScale(visibleSelection.startDeviceMs))}
+              x={Math.max(LEFT_PAD, xScale(visibleSelectionTimeRange[0]))}
               y={TOP_PAD}
             />
-            {(["startDeviceMs", "endDeviceMs"] as const).map((key) => (
-              <g className="selection-handle" key={key}>
+            {visibleSelectionTimeRange.map((timeMs, index) => (
+              <g className="selection-handle" key={index === 0 ? "start" : "end"}>
                 <line
-                  x1={xScale(visibleSelection[key])}
-                  x2={xScale(visibleSelection[key])}
+                  x1={xScale(timeMs)}
+                  x2={xScale(timeMs)}
                   y1={TOP_PAD}
                   y2={TOP_PAD + LANES.length * LANE_HEIGHT}
                 />
-                <circle cx={xScale(visibleSelection[key])} cy={TOP_PAD + 12} r={7} />
+                <circle cx={xScale(timeMs)} cy={TOP_PAD + 12} r={7} />
               </g>
             ))}
           </g>
@@ -460,6 +548,9 @@ function Timeline({
           const laneTop = TOP_PAD + laneIndex * LANE_HEIGHT;
           const laneMid = laneTop + LANE_HEIGHT / 2;
           const allValues = visibleSamples.flatMap((sample) => lane.series.map((series) => getValue(sample, series.key)));
+          if (allValues.length === 0) {
+            return null;
+          }
           const minValue = Math.min(...allValues);
           const maxValue = Math.max(...allValues);
           const rawPadding = Math.max(0.1, (maxValue - minValue) * 0.12);
@@ -498,7 +589,7 @@ function Timeline({
           <g key={tick}>
             <line className="time-grid" x1={xScale(tick)} x2={xScale(tick)} y1={TOP_PAD} y2={HEIGHT - BOTTOM_PAD} />
             <text className="time-tick" x={xScale(tick)} y={HEIGHT - 14}>
-              {formatTick(nearestSampleDate(samples, tick), viewSpan)}
+              {formatTick(new Date(tick), viewSpan)}
             </text>
           </g>
         ))}

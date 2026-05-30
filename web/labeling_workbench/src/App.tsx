@@ -173,6 +173,7 @@ function App() {
   const [form, setForm] = useState<LabelFormState>(DEFAULT_FORM);
   const [sessionForm, setSessionForm] = useState<SessionFormState>(DEFAULT_SESSION_FORM);
   const lastRuntimeSampleCountRef = useRef<number | null>(null);
+  const selectedSessionIdRef = useRef<string | null>(null);
 
   async function loadSessions(showLoading = true) {
     try {
@@ -192,6 +193,27 @@ function App() {
     }
   }
 
+  async function loadTimeline(sessionId: string, showLoading = true) {
+    try {
+      if (showLoading) {
+        setIsTimelineLoading(true);
+      }
+      const [nextSamples, nextLabels] = await Promise.all([
+        listSessionSamples(sessionId, 20000),
+        listEvents(sessionId),
+      ]);
+      setSamples(nextSamples);
+      setLabels(nextLabels);
+      setTimelineError(null);
+    } catch (caught) {
+      setTimelineError(caught instanceof Error ? caught.message : "Failed to load timeline");
+    } finally {
+      if (showLoading) {
+        setIsTimelineLoading(false);
+      }
+    }
+  }
+
   async function refreshApiStatus() {
     try {
       setIsApiStatusLoading(true);
@@ -206,6 +228,9 @@ function App() {
         if (runtimeStatus.sample_count !== lastRuntimeSampleCountRef.current) {
           lastRuntimeSampleCountRef.current = runtimeStatus.sample_count;
           await loadSessions(false);
+          if (selectedSessionIdRef.current) {
+            await loadTimeline(selectedSessionIdRef.current, false);
+          }
         }
       } else {
         setApiRuntimeStatus(null);
@@ -230,6 +255,10 @@ function App() {
   }, []);
 
   useEffect(() => {
+    selectedSessionIdRef.current = selectedSessionId;
+  }, [selectedSessionId]);
+
+  useEffect(() => {
     void refreshApiStatus();
     const interval = window.setInterval(() => {
       void refreshApiStatus();
@@ -245,36 +274,7 @@ function App() {
       return;
     }
 
-    let isActive = true;
-
-    async function loadTimeline() {
-      try {
-        setIsTimelineLoading(true);
-        const [nextSamples, nextLabels] = await Promise.all([
-          listSessionSamples(sessionId, 4000),
-          listEvents(sessionId),
-        ]);
-        if (!isActive) {
-          return;
-        }
-        setSamples(nextSamples);
-        setLabels(nextLabels);
-        setTimelineError(null);
-      } catch (caught) {
-        if (isActive) {
-          setTimelineError(caught instanceof Error ? caught.message : "Failed to load timeline");
-        }
-      } finally {
-        if (isActive) {
-          setIsTimelineLoading(false);
-        }
-      }
-    }
-
-    void loadTimeline();
-    return () => {
-      isActive = false;
-    };
+    void loadTimeline(sessionId);
   }, [selectedSessionId]);
 
   const selectedSession = sessions.find((session) => session.session_id === selectedSessionId) ?? null;
