@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 
-import { listSessions } from "./api";
-import type { SessionSummary } from "./types";
+import { listEvents, listSessionSamples, listSessions } from "./api";
+import Timeline from "./Timeline";
+import type { EventLabel, SessionSample, SessionSummary } from "./types";
 
 function formatDuration(session: SessionSummary): string {
   if (session.min_device_ms === null || session.max_device_ms === null) {
@@ -24,8 +25,12 @@ function formatTimestamp(value: string | null): string {
 function App() {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  const [samples, setSamples] = useState<SessionSample[]>([]);
+  const [labels, setLabels] = useState<EventLabel[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [timelineError, setTimelineError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isTimelineLoading, setIsTimelineLoading] = useState(false);
 
   useEffect(() => {
     let isActive = true;
@@ -56,6 +61,46 @@ function App() {
       isActive = false;
     };
   }, []);
+
+  useEffect(() => {
+    const sessionId: string = selectedSessionId ?? "";
+    if (!sessionId) {
+      setSamples([]);
+      setLabels([]);
+      return;
+    }
+
+    let isActive = true;
+
+    async function loadTimeline() {
+      try {
+        setIsTimelineLoading(true);
+        const [nextSamples, nextLabels] = await Promise.all([
+          listSessionSamples(sessionId, 4000),
+          listEvents(sessionId),
+        ]);
+        if (!isActive) {
+          return;
+        }
+        setSamples(nextSamples);
+        setLabels(nextLabels);
+        setTimelineError(null);
+      } catch (caught) {
+        if (isActive) {
+          setTimelineError(caught instanceof Error ? caught.message : "Failed to load timeline");
+        }
+      } finally {
+        if (isActive) {
+          setIsTimelineLoading(false);
+        }
+      }
+    }
+
+    void loadTimeline();
+    return () => {
+      isActive = false;
+    };
+  }, [selectedSessionId]);
 
   const selectedSession = sessions.find((session) => session.session_id === selectedSessionId) ?? null;
 
@@ -127,10 +172,15 @@ function App() {
                   <dd>{formatTimestamp(selectedSession.last_server_received_at)}</dd>
                 </div>
               </dl>
-              <div className="empty-timeline">
-                <strong>Timeline comes next.</strong>
-                <span>This sprint will add zoomable IMU traces, overlays, and range-based labeling here.</span>
-              </div>
+              {timelineError ? <p className="error-message">{timelineError}</p> : null}
+              {isTimelineLoading ? (
+                <div className="empty-timeline">
+                  <strong>Loading timeline.</strong>
+                  <span>Fetching range-ready samples and current labels from FastAPI.</span>
+                </div>
+              ) : (
+                <Timeline labels={labels} samples={samples} />
+              )}
             </>
           ) : (
             <div className="empty-timeline">

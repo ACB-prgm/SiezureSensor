@@ -180,7 +180,8 @@ dt {
 }
 
 .metrics-grid div,
-.empty-timeline {
+.empty-timeline,
+.timeline-card {
   border-radius: 20px;
   background: rgba(32, 37, 31, 0.05);
   padding: 1rem;
@@ -216,6 +217,87 @@ dd {
   background: #ffe7dc;
   color: #8a2f17;
   font-weight: 700;
+}
+
+.timeline-card {
+  display: grid;
+  gap: 0.75rem;
+  overflow: hidden;
+}
+
+.timeline-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  color: #526050;
+  font-size: 0.9rem;
+}
+
+.timeline-toolbar strong {
+  color: #20251f;
+}
+
+.timeline-toolbar button {
+  border: 0;
+  border-radius: 999px;
+  padding: 0.65rem 0.9rem;
+  background: #20251f;
+  color: #f8efe0;
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.timeline-svg {
+  display: block;
+  width: 100%;
+  min-height: 470px;
+  border-radius: 18px;
+  background: #fbf8ef;
+  cursor: grab;
+  touch-action: none;
+}
+
+.timeline-svg:active {
+  cursor: grabbing;
+}
+
+.timeline-background {
+  fill: #fbf8ef;
+}
+
+.lane-rule,
+.time-grid {
+  stroke: rgba(32, 37, 31, 0.12);
+  stroke-width: 1;
+}
+
+.time-grid {
+  stroke-dasharray: 4 7;
+}
+
+.lane-title {
+  fill: #20251f;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.lane-unit,
+.time-tick,
+.label-overlay-text {
+  fill: #697566;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.time-tick {
+  text-anchor: middle;
+}
+
+.label-overlay-text {
+  fill: rgba(32, 37, 31, 0.72);
+  text-transform: uppercase;
 }
 
 @media (max-width: 860px) {
