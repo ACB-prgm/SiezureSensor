@@ -110,6 +110,8 @@ Open `http://127.0.0.1:5173` on the server Mac, or `http://192.168.0.114:5173` f
 The workbench lets you:
 
 - select a recorded session
+- see whether the FastAPI service is online, offline, or actively receiving samples
+- start or stop the local FastAPI service from the dashboard when using the Vite dev server
 - view accel, gyro, accel magnitude, and gyro magnitude on a timeline
 - pan with horizontal scrolling or the horizontal slider
 - zoom with vertical scrolling, trackpad zoom, or the `+` / `-` controls
@@ -120,6 +122,8 @@ The workbench lets you:
 - create a new empty session before collecting data
 
 By default, the workbench calls the API on the same hostname at port `8000`. Set `VITE_API_BASE_URL` if the API is somewhere else.
+
+The Start/Stop API buttons are local-development controls provided by the Vite dev server at `/__dev/api/*`. They are intentionally not part of the production FastAPI API. Stop is only available for API processes started by the dashboard; if you started FastAPI manually in a terminal, stop it from that terminal.
 
 ## Sprint 3 Device Upload Workflow
 

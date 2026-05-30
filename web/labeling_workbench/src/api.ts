@@ -1,7 +1,16 @@
-import type { EventLabel, EventPayload, SessionCreatePayload, SessionSample, SessionSummary } from "./types";
+import type {
+  ApiControlStatus,
+  ApiRuntimeStatus,
+  EventLabel,
+  EventPayload,
+  SessionCreatePayload,
+  SessionSample,
+  SessionSummary,
+} from "./types";
 
 export const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ?? `${window.location.protocol}//${window.location.hostname}:8000`;
+export const API_CONTROL_BASE_URL = `${window.location.origin}/__dev/api`;
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, init);
@@ -13,6 +22,37 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
 
 export function listSessions(): Promise<SessionSummary[]> {
   return requestJson<SessionSummary[]>("/api/v1/sessions");
+}
+
+export function getApiRuntimeStatus(): Promise<ApiRuntimeStatus> {
+  return requestJson<ApiRuntimeStatus>("/api/v1/status");
+}
+
+async function requestControl(path: string, init?: RequestInit): Promise<ApiControlStatus> {
+  const response = await fetch(`${API_CONTROL_BASE_URL}${path}`, init);
+  if (!response.ok) {
+    let message = `Request failed with ${response.status}: ${response.statusText}`;
+    try {
+      const body = (await response.json()) as Partial<ApiControlStatus>;
+      message = body.message ?? message;
+    } catch {
+      // Keep the HTTP fallback if the dev control endpoint did not return JSON.
+    }
+    throw new Error(message);
+  }
+  return response.json() as Promise<ApiControlStatus>;
+}
+
+export function getApiControlStatus(): Promise<ApiControlStatus> {
+  return requestControl("/status");
+}
+
+export function startApiService(): Promise<ApiControlStatus> {
+  return requestControl("/start", { method: "POST" });
+}
+
+export function stopApiService(): Promise<ApiControlStatus> {
+  return requestControl("/stop", { method: "POST" });
 }
 
 export function createSession(payload: SessionCreatePayload): Promise<SessionSummary> {

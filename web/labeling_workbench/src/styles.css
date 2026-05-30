@@ -107,6 +107,90 @@ h2 {
   color: #f8efe0;
 }
 
+.api-status-card {
+  min-width: min(430px, 100%);
+  border: 1px solid rgba(248, 239, 224, 0.1);
+}
+
+.api-status-card.online {
+  background: #203228;
+}
+
+.api-status-card.recording {
+  background:
+    radial-gradient(circle at top right, rgba(75, 183, 112, 0.25), transparent 9rem),
+    #203228;
+}
+
+.api-status-card.offline {
+  background:
+    radial-gradient(circle at top right, rgba(224, 88, 48, 0.25), transparent 9rem),
+    #34241f;
+}
+
+.status-card-heading,
+.api-control-actions,
+.api-status-card dl {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.status-card .status-pill {
+  border-radius: 999px;
+  padding: 0.28rem 0.55rem;
+  background: rgba(248, 239, 224, 0.12);
+  color: #f8efe0;
+}
+
+.api-status-card p {
+  margin: 0;
+  color: rgba(248, 239, 224, 0.72);
+  font-size: 0.82rem;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.api-status-card dl {
+  margin: 0.25rem 0;
+}
+
+.api-status-card dl div {
+  display: grid;
+  gap: 0.16rem;
+}
+
+.api-status-card dt {
+  color: rgba(248, 239, 224, 0.58);
+}
+
+.api-status-card dd {
+  color: #f8efe0;
+  font-size: 0.92rem;
+}
+
+.api-control-actions {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+}
+
+.api-control-actions button {
+  border: 0;
+  border-radius: 999px;
+  padding: 0.52rem 0.7rem;
+  background: #f8efe0;
+  color: #20251f;
+  cursor: pointer;
+  font-size: 0.76rem;
+  font-weight: 900;
+}
+
+.api-control-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.44;
+}
+
 .status-card span,
 .panel-heading span,
 .session-meta,

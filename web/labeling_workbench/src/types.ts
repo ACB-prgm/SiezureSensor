@@ -93,3 +93,29 @@ export type ViewRange = {
   startDeviceMs: number;
   endDeviceMs: number;
 };
+
+export type ApiRuntimeStatus = {
+  status: "ok";
+  server_time: string;
+  database_path: string;
+  session_count: number;
+  batch_count: number;
+  sample_count: number;
+  latest_batch_received_at: string | null;
+  latest_sample_received_at: string | null;
+  latest_device_ms: number | null;
+  latest_session: {
+    session_id: string;
+    sample_count: number;
+    latest_received_at: string | null;
+  } | null;
+};
+
+export type ApiControlStatus = {
+  apiBaseUrl: string;
+  apiReachable: boolean;
+  managed: boolean;
+  pid: number | null;
+  message: string;
+  logs: string[];
+};

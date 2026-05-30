@@ -1,9 +1,24 @@
 import { useEffect, useState } from "react";
 
-import { API_BASE_URL, createEvent, createSession, deleteEvent, listEvents, listSessionSamples, listSessions, updateEvent } from "./api";
+import {
+  API_BASE_URL,
+  createEvent,
+  createSession,
+  deleteEvent,
+  getApiControlStatus,
+  getApiRuntimeStatus,
+  listEvents,
+  listSessionSamples,
+  listSessions,
+  startApiService,
+  stopApiService,
+  updateEvent,
+} from "./api";
 import Timeline from "./Timeline";
 import {
   EVENT_TYPES,
+  type ApiControlStatus,
+  type ApiRuntimeStatus,
   type EventLabel,
   type EventPayload,
   type EventType,
@@ -56,6 +71,33 @@ function formatTimestamp(value: string | null): string {
     return "Not recorded";
   }
   return new Date(value).toLocaleString();
+}
+
+function formatAge(value: string | null): string {
+  if (!value) {
+    return "never";
+  }
+  const elapsedMs = Date.now() - new Date(value).getTime();
+  if (!Number.isFinite(elapsedMs) || elapsedMs < 0) {
+    return "just now";
+  }
+  const seconds = Math.round(elapsedMs / 1000);
+  if (seconds < 60) {
+    return `${seconds}s ago`;
+  }
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) {
+    return `${minutes}m ago`;
+  }
+  const hours = Math.round(minutes / 60);
+  return `${hours}h ago`;
+}
+
+function isActivelyReceiving(value: string | null): boolean {
+  if (!value) {
+    return false;
+  }
+  return Date.now() - new Date(value).getTime() < 15_000;
 }
 
 function dateForDeviceMs(samples: SessionSample[], deviceMs: number): Date | null {
@@ -119,40 +161,70 @@ function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [isTimelineLoading, setIsTimelineLoading] = useState(false);
   const [isSelectionMode, setIsSelectionMode] = useState(false);
+  const [apiControlStatus, setApiControlStatus] = useState<ApiControlStatus | null>(null);
+  const [apiRuntimeStatus, setApiRuntimeStatus] = useState<ApiRuntimeStatus | null>(null);
+  const [apiStatusMessage, setApiStatusMessage] = useState<string | null>(null);
+  const [isApiStatusLoading, setIsApiStatusLoading] = useState(false);
+  const [isApiActionRunning, setIsApiActionRunning] = useState(false);
+  const [isApiControlAvailable, setIsApiControlAvailable] = useState(true);
   const [selectedRange, setSelectedRange] = useState<SelectionRange | null>(null);
   const [focusRange, setFocusRange] = useState<ViewRange | null>(null);
   const [editingLabel, setEditingLabel] = useState<EventLabel | null>(null);
   const [form, setForm] = useState<LabelFormState>(DEFAULT_FORM);
   const [sessionForm, setSessionForm] = useState<SessionFormState>(DEFAULT_SESSION_FORM);
 
-  useEffect(() => {
-    let isActive = true;
-
-    async function loadSessions() {
-      try {
-        setIsLoading(true);
-        const result = await listSessions();
-        if (!isActive) {
-          return;
-        }
-        setSessions(result);
-        setSelectedSessionId((current) => current ?? result[0]?.session_id ?? null);
-        setError(null);
-      } catch (caught) {
-        if (isActive) {
-          setError(caught instanceof Error ? caught.message : "Failed to load sessions");
-        }
-      } finally {
-        if (isActive) {
-          setIsLoading(false);
-        }
-      }
+  async function loadSessions() {
+    try {
+      setIsLoading(true);
+      const result = await listSessions();
+      setSessions(result);
+      setSelectedSessionId((current) => current ?? result[0]?.session_id ?? null);
+      setError(null);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Failed to load sessions");
+    } finally {
+      setIsLoading(false);
     }
+  }
 
+  async function refreshApiStatus() {
+    try {
+      setIsApiStatusLoading(true);
+      const controlStatus = await getApiControlStatus();
+      setApiControlStatus(controlStatus);
+      setIsApiControlAvailable(true);
+      setApiStatusMessage(controlStatus.message);
+
+      if (controlStatus.apiReachable) {
+        setApiRuntimeStatus(await getApiRuntimeStatus());
+      } else {
+        setApiRuntimeStatus(null);
+      }
+    } catch (caught) {
+      setIsApiControlAvailable(false);
+      setApiControlStatus(null);
+      try {
+        setApiRuntimeStatus(await getApiRuntimeStatus());
+        setApiStatusMessage("FastAPI is reachable. Dashboard start/stop controls are unavailable in this build.");
+      } catch {
+        setApiRuntimeStatus(null);
+        setApiStatusMessage(caught instanceof Error ? caught.message : "Failed to check API status");
+      }
+    } finally {
+      setIsApiStatusLoading(false);
+    }
+  }
+
+  useEffect(() => {
     void loadSessions();
-    return () => {
-      isActive = false;
-    };
+  }, []);
+
+  useEffect(() => {
+    void refreshApiStatus();
+    const interval = window.setInterval(() => {
+      void refreshApiStatus();
+    }, 5000);
+    return () => window.clearInterval(interval);
   }, []);
 
   useEffect(() => {
@@ -199,6 +271,10 @@ function App() {
   const selectedLabelId = editingLabel?.id ?? null;
   const selectedStartDate = selectedRange ? dateForDeviceMs(samples, selectedRange.startDeviceMs) : null;
   const selectedEndDate = selectedRange ? dateForDeviceMs(samples, selectedRange.endDeviceMs) : null;
+  const latestSampleReceivedAt = apiRuntimeStatus?.latest_sample_received_at ?? null;
+  const isApiReachable = apiControlStatus?.apiReachable ?? apiRuntimeStatus?.status === "ok";
+  const isRecording = isActivelyReceiving(latestSampleReceivedAt);
+  const apiStatusClass = isRecording ? "recording" : isApiReachable ? "online" : "offline";
 
   async function refreshLabels(sessionId: string) {
     setLabels(await listEvents(sessionId));
@@ -353,6 +429,37 @@ function App() {
     }
   }
 
+  async function startApi() {
+    try {
+      setIsApiActionRunning(true);
+      const status = await startApiService();
+      setApiControlStatus(status);
+      setApiStatusMessage(status.message);
+      await refreshApiStatus();
+      if (status.apiReachable) {
+        await loadSessions();
+      }
+    } catch (caught) {
+      setApiStatusMessage(caught instanceof Error ? caught.message : "Failed to start FastAPI");
+    } finally {
+      setIsApiActionRunning(false);
+    }
+  }
+
+  async function stopApi() {
+    try {
+      setIsApiActionRunning(true);
+      const status = await stopApiService();
+      setApiControlStatus(status);
+      setApiStatusMessage(status.message);
+      await refreshApiStatus();
+    } catch (caught) {
+      setApiStatusMessage(caught instanceof Error ? caught.message : "Failed to stop FastAPI");
+    } finally {
+      setIsApiActionRunning(false);
+    }
+  }
+
   return (
     <main className="app-shell">
       <section className="hero-panel">
@@ -364,9 +471,40 @@ function App() {
             future activity model.
           </p>
         </div>
-        <div className="status-card">
-          <span>API</span>
+        <div className={`status-card api-status-card ${apiStatusClass}`}>
+          <div className="status-card-heading">
+            <span>API</span>
+            <span className="status-pill">
+              {isRecording ? "Recording" : isApiReachable ? "Online" : isApiStatusLoading ? "Checking" : "Offline"}
+            </span>
+          </div>
           <strong>{API_BASE_URL}</strong>
+          <p>{apiStatusMessage ?? "Checking FastAPI status."}</p>
+          <dl>
+            <div>
+              <dt>Latest Sample</dt>
+              <dd>{formatAge(latestSampleReceivedAt)}</dd>
+            </div>
+            <div>
+              <dt>Samples</dt>
+              <dd>{apiRuntimeStatus ? apiRuntimeStatus.sample_count.toLocaleString() : "n/a"}</dd>
+            </div>
+          </dl>
+          <div className="api-control-actions">
+            <button disabled={!isApiControlAvailable || isApiActionRunning || isApiReachable} onClick={() => void startApi()} type="button">
+              Start API
+            </button>
+            <button
+              disabled={!isApiControlAvailable || isApiActionRunning || !apiControlStatus?.managed}
+              onClick={() => void stopApi()}
+              type="button"
+            >
+              Stop API
+            </button>
+            <button disabled={isApiStatusLoading || isApiActionRunning} onClick={() => void refreshApiStatus()} type="button">
+              Refresh
+            </button>
+          </div>
         </div>
       </section>
 
