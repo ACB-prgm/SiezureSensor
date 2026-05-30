@@ -62,3 +62,35 @@ class EventIn(BaseModel):
 class EventOut(EventIn):
   id: int
   created_at: str
+
+
+class SessionSummaryOut(BaseModel):
+  session_id: str
+  device_id: str
+  started_at: str | None = None
+  ended_at: str | None = None
+  mount_location: str | None = None
+  notes: str | None = None
+  sample_count: int
+  batch_count: int
+  min_device_ms: int | None = None
+  max_device_ms: int | None = None
+  first_server_received_at: str | None = None
+  last_server_received_at: str | None = None
+
+
+class SessionSampleOut(BaseModel):
+  device_id: str
+  session_id: str
+  batch_sequence: int
+  sample_index: int
+  device_ms: int
+  server_received_at: str
+  ax: float
+  ay: float
+  az: float
+  gx: float
+  gy: float
+  gz: float
+  accel_mag: float
+  gyro_mag: float
