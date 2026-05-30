@@ -23,6 +23,13 @@ body {
     linear-gradient(135deg, #f4f0e5 0%, #dbe5da 48%, #c9d7c8 100%);
 }
 
+svg,
+.timeline-card,
+.timeline-svg {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
 button {
   font: inherit;
 }
@@ -141,6 +148,36 @@ dt {
   gap: 0.7rem;
 }
 
+.new-session-panel {
+  display: grid;
+  gap: 0.65rem;
+  margin-top: 1rem;
+  border-radius: 18px;
+  padding: 0.95rem;
+  background: rgba(32, 37, 31, 0.05);
+}
+
+.new-session-panel label {
+  display: grid;
+  gap: 0.35rem;
+  color: #526050;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.new-session-panel input {
+  border: 1px solid rgba(32, 37, 31, 0.14);
+  border-radius: 12px;
+  padding: 0.62rem 0.72rem;
+  background: rgba(255, 252, 244, 0.9);
+  color: #20251f;
+  font: inherit;
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
 .session-row {
   display: grid;
   gap: 0.35rem;
@@ -238,6 +275,44 @@ dd {
   color: #20251f;
 }
 
+.timeline-sliders {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 0.42fr);
+  gap: 0.8rem;
+  align-items: center;
+}
+
+.timeline-sliders label {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.65rem;
+  align-items: center;
+  color: #526050;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.timeline-sliders input {
+  width: 100%;
+  accent-color: #20251f;
+}
+
+.zoom-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.zoom-controls span {
+  min-width: 4.4rem;
+  color: #20251f;
+  font-size: 0.82rem;
+  font-weight: 900;
+  text-align: center;
+}
+
 .timeline-toolbar button {
   border: 0;
   border-radius: 999px;
@@ -330,10 +405,30 @@ dd {
   text-transform: uppercase;
 }
 
+.label-overlay.selected {
+  stroke: rgba(32, 37, 31, 0.72);
+  stroke-width: 3;
+}
+
 .selection-overlay {
   fill: rgba(32, 37, 31, 0.12);
   stroke: rgba(32, 37, 31, 0.62);
   stroke-dasharray: 7 6;
+  stroke-width: 2;
+}
+
+.selection-handle {
+  cursor: ew-resize;
+}
+
+.selection-handle line {
+  stroke: #20251f;
+  stroke-width: 3;
+}
+
+.selection-handle circle {
+  fill: #20251f;
+  stroke: #f8efe0;
   stroke-width: 2;
 }
 
@@ -368,6 +463,43 @@ dd {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.75rem;
+}
+
+.time-entry-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 0.85rem;
+}
+
+.time-entry-grid fieldset {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.4rem;
+  border: 1px solid rgba(32, 37, 31, 0.12);
+  border-radius: 16px;
+  margin: 0;
+  padding: 0.7rem;
+}
+
+.time-entry-grid legend {
+  color: #526050;
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.time-entry-grid input {
+  min-width: 0;
+  border: 1px solid rgba(32, 37, 31, 0.14);
+  border-radius: 12px;
+  padding: 0.58rem;
+  background: rgba(255, 252, 244, 0.9);
+  color: #20251f;
+  font: inherit;
+  font-weight: 800;
+  text-align: center;
 }
 
 .label-form-grid label {
@@ -452,7 +584,13 @@ dd {
   }
 
   .label-workflow,
-  .label-form-grid {
+  .label-form-grid,
+  .time-entry-grid,
+  .timeline-sliders {
+    grid-template-columns: 1fr;
+  }
+
+  .timeline-sliders label {
     grid-template-columns: 1fr;
   }
 }

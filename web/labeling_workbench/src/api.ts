@@ -1,4 +1,4 @@
-import type { EventLabel, EventPayload, SessionSample, SessionSummary } from "./types";
+import type { EventLabel, EventPayload, SessionCreatePayload, SessionSample, SessionSummary } from "./types";
 
 export const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ?? `${window.location.protocol}//${window.location.hostname}:8000`;
@@ -15,8 +15,27 @@ export function listSessions(): Promise<SessionSummary[]> {
   return requestJson<SessionSummary[]>("/api/v1/sessions");
 }
 
-export function listSessionSamples(sessionId: string, maxPoints = 2000): Promise<SessionSample[]> {
+export function createSession(payload: SessionCreatePayload): Promise<SessionSummary> {
+  return requestJson<SessionSummary>("/api/v1/sessions", {
+    body: JSON.stringify(payload),
+    headers: { "Content-Type": "application/json" },
+    method: "POST",
+  });
+}
+
+export function listSessionSamples(
+  sessionId: string,
+  maxPoints = 2000,
+  startDeviceMs?: number,
+  endDeviceMs?: number,
+): Promise<SessionSample[]> {
   const params = new URLSearchParams({ max_points: String(maxPoints) });
+  if (startDeviceMs !== undefined) {
+    params.set("start_device_ms", String(Math.round(startDeviceMs)));
+  }
+  if (endDeviceMs !== undefined) {
+    params.set("end_device_ms", String(Math.round(endDeviceMs)));
+  }
   return requestJson<SessionSample[]>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/samples?${params}`);
 }
 

@@ -1,20 +1,42 @@
 import { useEffect, useState } from "react";
 
-import { API_BASE_URL, createEvent, deleteEvent, listEvents, listSessionSamples, listSessions, updateEvent } from "./api";
+import { API_BASE_URL, createEvent, createSession, deleteEvent, listEvents, listSessionSamples, listSessions, updateEvent } from "./api";
 import Timeline from "./Timeline";
-import { EVENT_TYPES, type EventLabel, type EventPayload, type EventType, type SelectionRange, type SessionSample, type SessionSummary } from "./types";
+import {
+  EVENT_TYPES,
+  type EventLabel,
+  type EventPayload,
+  type EventType,
+  type SelectionRange,
+  type SessionCreatePayload,
+  type SessionSample,
+  type SessionSummary,
+  type ViewRange,
+} from "./types";
 
 type LabelFormState = {
   eventType: EventType;
   severity: string;
-  source: string;
   notes: string;
 };
 
 const DEFAULT_FORM: LabelFormState = {
   eventType: "scratching",
   severity: "",
-  source: "manual",
+  notes: "",
+};
+
+type SessionFormState = {
+  sessionId: string;
+  deviceId: string;
+  mountLocation: string;
+  notes: string;
+};
+
+const DEFAULT_SESSION_FORM: SessionFormState = {
+  sessionId: "",
+  deviceId: "beanie-v0-001",
+  mountLocation: "",
   notes: "",
 };
 
@@ -36,6 +58,56 @@ function formatTimestamp(value: string | null): string {
   return new Date(value).toLocaleString();
 }
 
+function dateForDeviceMs(samples: SessionSample[], deviceMs: number): Date | null {
+  if (samples.length === 0) {
+    return null;
+  }
+  let nearest = samples[0];
+  let nearestDistance = Math.abs(nearest.device_ms - deviceMs);
+  for (const sample of samples) {
+    const distance = Math.abs(sample.device_ms - deviceMs);
+    if (distance < nearestDistance) {
+      nearest = sample;
+      nearestDistance = distance;
+    }
+  }
+  return new Date(nearest.server_received_at);
+}
+
+function deviceMsForDate(samples: SessionSample[], targetDate: Date): number | null {
+  if (samples.length === 0) {
+    return null;
+  }
+  let nearest = samples[0];
+  let nearestDistance = Math.abs(new Date(nearest.server_received_at).getTime() - targetDate.getTime());
+  for (const sample of samples) {
+    const distance = Math.abs(new Date(sample.server_received_at).getTime() - targetDate.getTime());
+    if (distance < nearestDistance) {
+      nearest = sample;
+      nearestDistance = distance;
+    }
+  }
+  return nearest.device_ms;
+}
+
+function rangeAroundLabel(label: EventLabel): ViewRange {
+  const labelSpan = label.end_device_ms - label.start_device_ms;
+  const viewSpan = Math.max(10_000, labelSpan * 5);
+  const midpoint = (label.start_device_ms + label.end_device_ms) / 2;
+  return {
+    startDeviceMs: Math.max(0, Math.round(midpoint - viewSpan / 2)),
+    endDeviceMs: Math.round(midpoint + viewSpan / 2),
+  };
+}
+
+function timePart(value: Date | null, part: "hours" | "minutes" | "seconds"): string {
+  if (!value) {
+    return "";
+  }
+  const number = part === "hours" ? value.getHours() : part === "minutes" ? value.getMinutes() : value.getSeconds();
+  return String(number).padStart(2, "0");
+}
+
 function App() {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
@@ -48,8 +120,10 @@ function App() {
   const [isTimelineLoading, setIsTimelineLoading] = useState(false);
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [selectedRange, setSelectedRange] = useState<SelectionRange | null>(null);
+  const [focusRange, setFocusRange] = useState<ViewRange | null>(null);
   const [editingLabel, setEditingLabel] = useState<EventLabel | null>(null);
   const [form, setForm] = useState<LabelFormState>(DEFAULT_FORM);
+  const [sessionForm, setSessionForm] = useState<SessionFormState>(DEFAULT_SESSION_FORM);
 
   useEffect(() => {
     let isActive = true;
@@ -122,6 +196,9 @@ function App() {
   }, [selectedSessionId]);
 
   const selectedSession = sessions.find((session) => session.session_id === selectedSessionId) ?? null;
+  const selectedLabelId = editingLabel?.id ?? null;
+  const selectedStartDate = selectedRange ? dateForDeviceMs(samples, selectedRange.startDeviceMs) : null;
+  const selectedEndDate = selectedRange ? dateForDeviceMs(samples, selectedRange.endDeviceMs) : null;
 
   async function refreshLabels(sessionId: string) {
     setLabels(await listEvents(sessionId));
@@ -130,6 +207,7 @@ function App() {
   function clearForm() {
     setEditingLabel(null);
     setSelectedRange(null);
+    setFocusRange(null);
     setForm(DEFAULT_FORM);
     setActionMessage(null);
   }
@@ -137,18 +215,31 @@ function App() {
   function editLabel(label: EventLabel) {
     setEditingLabel(label);
     setSelectedRange({ startDeviceMs: label.start_device_ms, endDeviceMs: label.end_device_ms });
+    setFocusRange(rangeAroundLabel(label));
     setForm({
       eventType: label.event_type,
       severity: label.severity === null ? "" : String(label.severity),
-      source: label.source,
       notes: label.notes ?? "",
     });
     setActionMessage(null);
   }
 
+  function hasOverlap(range: SelectionRange, excludeEventId: number | null): boolean {
+    return labels.some((label) => {
+      if (excludeEventId !== null && label.id === excludeEventId) {
+        return false;
+      }
+      return label.start_device_ms < range.endDeviceMs && label.end_device_ms > range.startDeviceMs;
+    });
+  }
+
   function buildPayload(sessionId: string): EventPayload | null {
     if (!selectedRange || selectedRange.endDeviceMs <= selectedRange.startDeviceMs) {
       setActionMessage("Select a non-empty range on the timeline before saving.");
+      return null;
+    }
+    if (hasOverlap(selectedRange, editingLabel?.id ?? null)) {
+      setActionMessage("Selected range overlaps an existing label. Adjust the start or end before saving.");
       return null;
     }
 
@@ -158,7 +249,7 @@ function App() {
       severity: form.severity === "" ? null : Number(form.severity),
       start_device_ms: selectedRange.startDeviceMs,
       end_device_ms: selectedRange.endDeviceMs,
-      source: form.source.trim() || "manual",
+      source: "manual",
       notes: form.notes.trim() === "" ? null : form.notes.trim(),
     };
   }
@@ -203,6 +294,65 @@ function App() {
     }
   }
 
+  function updateRangeTime(boundary: "start" | "end", part: "hours" | "minutes" | "seconds", rawValue: string) {
+    if (!selectedRange) {
+      return;
+    }
+    const numericValue = Number(rawValue);
+    if (!Number.isFinite(numericValue)) {
+      return;
+    }
+    const currentDate = dateForDeviceMs(samples, boundary === "start" ? selectedRange.startDeviceMs : selectedRange.endDeviceMs);
+    if (!currentDate) {
+      return;
+    }
+    const nextDate = new Date(currentDate);
+    if (part === "hours") {
+      nextDate.setHours(Math.min(23, Math.max(0, numericValue)));
+    } else if (part === "minutes") {
+      nextDate.setMinutes(Math.min(59, Math.max(0, numericValue)));
+    } else {
+      nextDate.setSeconds(Math.min(59, Math.max(0, numericValue)));
+    }
+    const nextDeviceMs = deviceMsForDate(samples, nextDate);
+    if (nextDeviceMs === null) {
+      return;
+    }
+    setSelectedRange((current) => {
+      if (!current) {
+        return current;
+      }
+      if (boundary === "start") {
+        return { ...current, startDeviceMs: Math.min(nextDeviceMs, current.endDeviceMs - 1) };
+      }
+      return { ...current, endDeviceMs: Math.max(nextDeviceMs, current.startDeviceMs + 1) };
+    });
+  }
+
+  async function saveSession() {
+    const payload: SessionCreatePayload = {
+      session_id: sessionForm.sessionId.trim(),
+      device_id: sessionForm.deviceId.trim(),
+      mount_location: sessionForm.mountLocation.trim() || null,
+      notes: sessionForm.notes.trim() || null,
+    };
+    if (!payload.session_id || !payload.device_id) {
+      setError("Session ID and device ID are required.");
+      return;
+    }
+
+    try {
+      const created = await createSession(payload);
+      const nextSessions = await listSessions();
+      setSessions(nextSessions);
+      setSelectedSessionId(created.session_id);
+      setSessionForm(DEFAULT_SESSION_FORM);
+      setError(null);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Failed to create session");
+    }
+  }
+
   return (
     <main className="app-shell">
       <section className="hero-panel">
@@ -244,6 +394,44 @@ function App() {
               </button>
             ))}
           </div>
+
+          <div className="new-session-panel">
+            <h2>New Session</h2>
+            <label>
+              Session ID
+              <input
+                placeholder="2026-05-30-beanie-test"
+                value={sessionForm.sessionId}
+                onChange={(event) => setSessionForm((current) => ({ ...current, sessionId: event.target.value }))}
+              />
+            </label>
+            <label>
+              Device ID
+              <input
+                value={sessionForm.deviceId}
+                onChange={(event) => setSessionForm((current) => ({ ...current, deviceId: event.target.value }))}
+              />
+            </label>
+            <label>
+              Mount
+              <input
+                placeholder="collar"
+                value={sessionForm.mountLocation}
+                onChange={(event) => setSessionForm((current) => ({ ...current, mountLocation: event.target.value }))}
+              />
+            </label>
+            <label>
+              Notes
+              <input
+                placeholder="optional"
+                value={sessionForm.notes}
+                onChange={(event) => setSessionForm((current) => ({ ...current, notes: event.target.value }))}
+              />
+            </label>
+            <button className="primary-button" onClick={saveSession} type="button">
+              Create session
+            </button>
+          </div>
         </aside>
 
         <section className="detail-panel">
@@ -279,6 +467,7 @@ function App() {
                 </div>
               ) : (
                 <Timeline
+                  focusRange={focusRange}
                   isSelectionMode={isSelectionMode}
                   labels={labels}
                   onRangeSelected={(range) => {
@@ -286,7 +475,9 @@ function App() {
                     setIsSelectionMode(false);
                     setActionMessage(null);
                   }}
+                  onSelectedRangeChange={setSelectedRange}
                   samples={samples}
+                  selectedLabelId={selectedLabelId}
                   selectedRange={selectedRange}
                 />
               )}
@@ -304,8 +495,64 @@ function App() {
                   </div>
                   <div className="range-readout">
                     {selectedRange
-                      ? `${selectedRange.startDeviceMs} ms -> ${selectedRange.endDeviceMs} ms`
+                      ? `${selectedRange.startDeviceMs} ms to ${selectedRange.endDeviceMs} ms`
                       : "No range selected"}
+                  </div>
+                  <div className="time-entry-grid">
+                    <fieldset disabled={!selectedRange || samples.length === 0}>
+                      <legend>Start time</legend>
+                      <input
+                        aria-label="Start hour"
+                        max={23}
+                        min={0}
+                        onChange={(event) => updateRangeTime("start", "hours", event.target.value)}
+                        type="number"
+                        value={timePart(selectedStartDate, "hours")}
+                      />
+                      <input
+                        aria-label="Start minute"
+                        max={59}
+                        min={0}
+                        onChange={(event) => updateRangeTime("start", "minutes", event.target.value)}
+                        type="number"
+                        value={timePart(selectedStartDate, "minutes")}
+                      />
+                      <input
+                        aria-label="Start second"
+                        max={59}
+                        min={0}
+                        onChange={(event) => updateRangeTime("start", "seconds", event.target.value)}
+                        type="number"
+                        value={timePart(selectedStartDate, "seconds")}
+                      />
+                    </fieldset>
+                    <fieldset disabled={!selectedRange || samples.length === 0}>
+                      <legend>End time</legend>
+                      <input
+                        aria-label="End hour"
+                        max={23}
+                        min={0}
+                        onChange={(event) => updateRangeTime("end", "hours", event.target.value)}
+                        type="number"
+                        value={timePart(selectedEndDate, "hours")}
+                      />
+                      <input
+                        aria-label="End minute"
+                        max={59}
+                        min={0}
+                        onChange={(event) => updateRangeTime("end", "minutes", event.target.value)}
+                        type="number"
+                        value={timePart(selectedEndDate, "minutes")}
+                      />
+                      <input
+                        aria-label="End second"
+                        max={59}
+                        min={0}
+                        onChange={(event) => updateRangeTime("end", "seconds", event.target.value)}
+                        type="number"
+                        value={timePart(selectedEndDate, "seconds")}
+                      />
+                    </fieldset>
                   </div>
                   <div className="label-form-grid">
                     <label>
@@ -334,13 +581,6 @@ function App() {
                           </option>
                         ))}
                       </select>
-                    </label>
-                    <label>
-                      Source
-                      <input
-                        value={form.source}
-                        onChange={(event) => setForm((current) => ({ ...current, source: event.target.value }))}
-                      />
                     </label>
                     <label>
                       Notes
@@ -378,7 +618,7 @@ function App() {
                         </div>
                         <div className="row-actions">
                           <button className="secondary-button" onClick={() => editLabel(label)} type="button">
-                            Edit
+                            Select
                           </button>
                           <button className="danger-button" onClick={() => void removeLabel(label)} type="button">
                             Delete

@@ -31,6 +31,15 @@ export type EventPayload = {
   notes: string | null;
 };
 
+export type SessionCreatePayload = {
+  session_id: string;
+  device_id: string;
+  started_at?: string | null;
+  ended_at?: string | null;
+  mount_location?: string | null;
+  notes?: string | null;
+};
+
 export type SessionSummary = {
   session_id: string;
   device_id: string;
@@ -76,6 +85,11 @@ export type EventLabel = {
 };
 
 export type SelectionRange = {
+  startDeviceMs: number;
+  endDeviceMs: number;
+};
+
+export type ViewRange = {
   startDeviceMs: number;
   endDeviceMs: number;
 };

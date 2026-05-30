@@ -1,13 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import type { EventLabel, SelectionRange, SessionSample } from "./types";
+import type { EventLabel, SelectionRange, SessionSample, ViewRange } from "./types";
 
 type TimelineProps = {
   samples: SessionSample[];
   labels: EventLabel[];
   isSelectionMode: boolean;
   selectedRange: SelectionRange | null;
+  focusRange: ViewRange | null;
+  selectedLabelId: number | null;
   onRangeSelected: (range: SelectionRange) => void;
+  onSelectedRangeChange: (range: SelectionRange) => void;
 };
 
 type Lane = {
@@ -61,8 +64,9 @@ const LANE_HEIGHT = 132;
 const LEFT_PAD = 86;
 const RIGHT_PAD = 22;
 const TOP_PAD = 20;
-const BOTTOM_PAD = 34;
+const BOTTOM_PAD = 44;
 const HEIGHT = TOP_PAD + BOTTOM_PAD + LANES.length * LANE_HEIGHT;
+const MIN_SPAN_MS = 1000;
 
 function eventColor(eventType: string): string {
   const colors: Record<string, string> = {
@@ -79,14 +83,6 @@ function eventColor(eventType: string): string {
   return colors[eventType] ?? colors.unknown;
 }
 
-function formatMs(ms: number): string {
-  const seconds = ms / 1000;
-  if (seconds < 60) {
-    return `${seconds.toFixed(1)}s`;
-  }
-  return `${(seconds / 60).toFixed(2)}m`;
-}
-
 function clampRange(start: number, end: number, min: number, max: number): [number, number] {
   const span = end - start;
   if (span >= max - min) {
@@ -99,6 +95,19 @@ function clampRange(start: number, end: number, min: number, max: number): [numb
     return [max - span, max];
   }
   return [start, end];
+}
+
+function formatTick(date: Date, spanMs: number): string {
+  if (spanMs > 1000 * 60 * 60 * 24) {
+    return date.toLocaleDateString([], { month: "short", day: "numeric" });
+  }
+  if (spanMs > 1000 * 60 * 60) {
+    return date.toLocaleString([], { month: "short", day: "numeric", hour: "numeric" });
+  }
+  if (spanMs > 1000 * 60) {
+    return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  }
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
 function getValue(sample: SessionSample, key: keyof SessionSample): number {
@@ -115,12 +124,39 @@ function buildPath(
   return samples.map((sample) => `${xScale(sample.device_ms).toFixed(2)},${yScale(getValue(sample, key)).toFixed(2)}`).join(" ");
 }
 
-function Timeline({ samples, labels, isSelectionMode, onRangeSelected, selectedRange }: TimelineProps) {
+function nearestSampleDate(samples: SessionSample[], deviceMs: number): Date {
+  if (samples.length === 0) {
+    return new Date();
+  }
+  let nearest = samples[0];
+  let nearestDistance = Math.abs(nearest.device_ms - deviceMs);
+  for (const sample of samples) {
+    const distance = Math.abs(sample.device_ms - deviceMs);
+    if (distance < nearestDistance) {
+      nearest = sample;
+      nearestDistance = distance;
+    }
+  }
+  return new Date(nearest.server_received_at);
+}
+
+function Timeline({
+  samples,
+  labels,
+  isSelectionMode,
+  onRangeSelected,
+  onSelectedRangeChange,
+  selectedLabelId,
+  selectedRange,
+  focusRange,
+}: TimelineProps) {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const [viewRange, setViewRange] = useState<[number, number] | null>(null);
   const [dragStart, setDragStart] = useState<{ pointerX: number; range: [number, number] } | null>(null);
   const [selectionDrag, setSelectionDrag] = useState<number | null>(null);
+  const [handleDrag, setHandleDrag] = useState<"start" | "end" | null>(null);
   const [selectionDraft, setSelectionDraft] = useState<SelectionRange | null>(null);
+  const [verticalScale, setVerticalScale] = useState(1);
 
   const domain = useMemo<[number, number] | null>(() => {
     if (samples.length === 0) {
@@ -132,6 +168,12 @@ function Timeline({ samples, labels, isSelectionMode, onRangeSelected, selectedR
   useEffect(() => {
     setViewRange(domain);
   }, [domain]);
+
+  useEffect(() => {
+    if (domain && focusRange) {
+      setViewRange(clampRange(focusRange.startDeviceMs, focusRange.endDeviceMs, domain[0], domain[1]));
+    }
+  }, [domain, focusRange]);
 
   const currentRange = viewRange ?? domain;
   const visibleSamples = useMemo(() => {
@@ -151,13 +193,21 @@ function Timeline({ samples, labels, isSelectionMode, onRangeSelected, selectedR
     );
   }
 
-  const activeRange: [number, number] = currentRange;
   const [domainStart, domainEnd] = domain;
+  const activeRange: [number, number] = currentRange;
   const [viewStart, viewEnd] = activeRange;
+  const totalSpan = domainEnd - domainStart;
+  const viewSpan = viewEnd - viewStart;
+  const viewPercent = totalSpan > 0 ? (viewSpan / totalSpan) * 100 : 100;
+  const horizontalPercent = totalSpan > viewSpan ? ((viewStart - domainStart) / (totalSpan - viewSpan)) * 100 : 0;
   const plotWidth = WIDTH - LEFT_PAD - RIGHT_PAD;
 
+  function setClampedViewRange(start: number, end: number) {
+    setViewRange(clampRange(start, end, domainStart, domainEnd));
+  }
+
   function xScale(deviceMs: number): number {
-    return LEFT_PAD + ((deviceMs - viewStart) / (viewEnd - viewStart)) * plotWidth;
+    return LEFT_PAD + ((deviceMs - viewStart) / viewSpan) * plotWidth;
   }
 
   function pointerToDeviceMs(clientX: number): number {
@@ -167,34 +217,63 @@ function Timeline({ samples, labels, isSelectionMode, onRangeSelected, selectedR
     }
     const svgX = ((clientX - rect.left) / rect.width) * WIDTH;
     const ratio = Math.min(1, Math.max(0, (svgX - LEFT_PAD) / plotWidth));
-    return viewStart + ratio * (viewEnd - viewStart);
+    return viewStart + ratio * viewSpan;
+  }
+
+  function zoomAround(focus: number, multiplier: number) {
+    const nextSpan = Math.min(totalSpan, Math.max(MIN_SPAN_MS, viewSpan * multiplier));
+    const focusRatio = (focus - viewStart) / viewSpan;
+    const nextStart = focus - nextSpan * focusRatio;
+    setClampedViewRange(nextStart, nextStart + nextSpan);
+  }
+
+  function panBy(deltaMs: number) {
+    setClampedViewRange(viewStart + deltaMs, viewEnd + deltaMs);
   }
 
   function handleWheel(event: React.WheelEvent<SVGSVGElement>) {
     event.preventDefault();
+    if (Math.abs(event.deltaX) > Math.abs(event.deltaY) || event.shiftKey) {
+      panBy(event.deltaX * (viewSpan / plotWidth));
+      return;
+    }
     const focus = pointerToDeviceMs(event.clientX);
-    const zoomFactor = event.deltaY < 0 ? 0.78 : 1.28;
-    const currentSpan = viewEnd - viewStart;
-    const nextSpan = Math.min(domainEnd - domainStart, Math.max(1000, currentSpan * zoomFactor));
-    const focusRatio = (focus - viewStart) / currentSpan;
-    const nextStart = focus - nextSpan * focusRatio;
-    setViewRange(clampRange(nextStart, nextStart + nextSpan, domainStart, domainEnd));
+    zoomAround(focus, event.deltaY < 0 ? 0.78 : 1.28);
   }
 
   function handlePointerDown(event: React.PointerEvent<SVGSVGElement>) {
+    event.preventDefault();
     svgRef.current?.setPointerCapture(event.pointerId);
+    const pointerMs = Math.round(pointerToDeviceMs(event.clientX));
+    const handleToleranceMs = viewSpan * 0.012;
+
+    if (selectedRange && Math.abs(pointerMs - selectedRange.startDeviceMs) <= handleToleranceMs) {
+      setHandleDrag("start");
+      return;
+    }
+    if (selectedRange && Math.abs(pointerMs - selectedRange.endDeviceMs) <= handleToleranceMs) {
+      setHandleDrag("end");
+      return;
+    }
     if (isSelectionMode) {
-      const startMs = Math.round(pointerToDeviceMs(event.clientX));
-      setSelectionDrag(startMs);
-      setSelectionDraft({ startDeviceMs: startMs, endDeviceMs: startMs });
+      setSelectionDrag(pointerMs);
+      setSelectionDraft({ startDeviceMs: pointerMs, endDeviceMs: pointerMs });
       return;
     }
     setDragStart({ pointerX: event.clientX, range: activeRange });
   }
 
   function handlePointerMove(event: React.PointerEvent<SVGSVGElement>) {
+    const currentMs = Math.round(pointerToDeviceMs(event.clientX));
+    if (handleDrag && selectedRange) {
+      const nextRange =
+        handleDrag === "start"
+          ? { startDeviceMs: Math.min(currentMs, selectedRange.endDeviceMs - 1), endDeviceMs: selectedRange.endDeviceMs }
+          : { startDeviceMs: selectedRange.startDeviceMs, endDeviceMs: Math.max(currentMs, selectedRange.startDeviceMs + 1) };
+      onSelectedRangeChange(nextRange);
+      return;
+    }
     if (selectionDrag !== null) {
-      const currentMs = Math.round(pointerToDeviceMs(event.clientX));
       setSelectionDraft({
         startDeviceMs: Math.min(selectionDrag, currentMs),
         endDeviceMs: Math.max(selectionDrag, currentMs),
@@ -210,7 +289,7 @@ function Timeline({ samples, labels, isSelectionMode, onRangeSelected, selectedR
     }
     const deltaPx = event.clientX - dragStart.pointerX;
     const deltaMs = (deltaPx / rect.width) * WIDTH * ((dragStart.range[1] - dragStart.range[0]) / plotWidth);
-    setViewRange(clampRange(dragStart.range[0] - deltaMs, dragStart.range[1] - deltaMs, domainStart, domainEnd));
+    setClampedViewRange(dragStart.range[0] - deltaMs, dragStart.range[1] - deltaMs);
   }
 
   function handlePointerUp(event: React.PointerEvent<SVGSVGElement>) {
@@ -220,10 +299,11 @@ function Timeline({ samples, labels, isSelectionMode, onRangeSelected, selectedR
     }
     setSelectionDrag(null);
     setSelectionDraft(null);
+    setHandleDrag(null);
     setDragStart(null);
   }
 
-  const ticks = Array.from({ length: 6 }, (_, index) => viewStart + ((viewEnd - viewStart) * index) / 5);
+  const ticks = Array.from({ length: 6 }, (_, index) => viewStart + (viewSpan * index) / 5);
   const visibleSelection = selectionDraft ?? selectedRange;
 
   return (
@@ -231,17 +311,61 @@ function Timeline({ samples, labels, isSelectionMode, onRangeSelected, selectedR
       <div className="timeline-toolbar">
         <div>
           <strong>{visibleSamples.length.toLocaleString()}</strong>
-          <span> visible points</span>
+          <span> visible points · view {viewPercent.toFixed(1)}%</span>
         </div>
-        <button type="button" onClick={() => setViewRange(domain)}>
-          Reset zoom
-        </button>
+        <div className="zoom-controls" aria-label="Timeline view controls">
+          <button type="button" onClick={() => zoomAround((viewStart + viewEnd) / 2, 1.25)}>
+            -
+          </button>
+          <span>{viewPercent.toFixed(1)}%</span>
+          <button type="button" onClick={() => zoomAround((viewStart + viewEnd) / 2, 0.8)}>
+            +
+          </button>
+          <button type="button" onClick={() => setViewRange(domain)}>
+            Reset
+          </button>
+        </div>
       </div>
+
+      <div className="timeline-sliders">
+        <label>
+          Horizontal
+          <input
+            max={100}
+            min={0}
+            onChange={(event) => {
+              const ratio = Number(event.target.value) / 100;
+              const nextStart = domainStart + (totalSpan - viewSpan) * ratio;
+              setClampedViewRange(nextStart, nextStart + viewSpan);
+            }}
+            step={0.1}
+            type="range"
+            value={horizontalPercent}
+          />
+        </label>
+        <label>
+          Vertical scale
+          <input
+            max={300}
+            min={50}
+            onChange={(event) => setVerticalScale(Number(event.target.value) / 100)}
+            step={5}
+            type="range"
+            value={verticalScale * 100}
+          />
+          <span>{Math.round(verticalScale * 100)}%</span>
+        </label>
+      </div>
+
       <svg
         aria-label="IMU timeline"
         className="timeline-svg"
         onPointerDown={handlePointerDown}
-        onPointerLeave={() => setDragStart(null)}
+        onPointerLeave={() => {
+          setDragStart(null);
+          setSelectionDrag(null);
+          setHandleDrag(null);
+        }}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onWheel={handleWheel}
@@ -259,6 +383,7 @@ function Timeline({ samples, labels, isSelectionMode, onRangeSelected, selectedR
           return (
             <g key={label.id}>
               <rect
+                className={label.id === selectedLabelId ? "label-overlay selected" : "label-overlay"}
                 fill={eventColor(label.event_type)}
                 height={LANES.length * LANE_HEIGHT}
                 rx={8}
@@ -274,18 +399,31 @@ function Timeline({ samples, labels, isSelectionMode, onRangeSelected, selectedR
         })}
 
         {visibleSelection && visibleSelection.endDeviceMs >= viewStart && visibleSelection.startDeviceMs <= viewEnd ? (
-          <rect
-            className="selection-overlay"
-            height={LANES.length * LANE_HEIGHT}
-            rx={10}
-            width={Math.max(
-              3,
-              Math.min(WIDTH - RIGHT_PAD, xScale(visibleSelection.endDeviceMs)) -
-                Math.max(LEFT_PAD, xScale(visibleSelection.startDeviceMs)),
-            )}
-            x={Math.max(LEFT_PAD, xScale(visibleSelection.startDeviceMs))}
-            y={TOP_PAD}
-          />
+          <g>
+            <rect
+              className="selection-overlay"
+              height={LANES.length * LANE_HEIGHT}
+              rx={10}
+              width={Math.max(
+                3,
+                Math.min(WIDTH - RIGHT_PAD, xScale(visibleSelection.endDeviceMs)) -
+                  Math.max(LEFT_PAD, xScale(visibleSelection.startDeviceMs)),
+              )}
+              x={Math.max(LEFT_PAD, xScale(visibleSelection.startDeviceMs))}
+              y={TOP_PAD}
+            />
+            {(["startDeviceMs", "endDeviceMs"] as const).map((key) => (
+              <g className="selection-handle" key={key}>
+                <line
+                  x1={xScale(visibleSelection[key])}
+                  x2={xScale(visibleSelection[key])}
+                  y1={TOP_PAD}
+                  y2={TOP_PAD + LANES.length * LANE_HEIGHT}
+                />
+                <circle cx={xScale(visibleSelection[key])} cy={TOP_PAD + 12} r={7} />
+              </g>
+            ))}
+          </g>
         ) : null}
 
         {LANES.map((lane, laneIndex) => {
@@ -294,10 +432,13 @@ function Timeline({ samples, labels, isSelectionMode, onRangeSelected, selectedR
           const allValues = visibleSamples.flatMap((sample) => lane.series.map((series) => getValue(sample, series.key)));
           const minValue = Math.min(...allValues);
           const maxValue = Math.max(...allValues);
-          const padding = Math.max(0.1, (maxValue - minValue) * 0.12);
-          const yMin = minValue - padding;
-          const yMax = maxValue + padding;
-          const yScale = (value: number) => laneTop + LANE_HEIGHT - 18 - ((value - yMin) / (yMax - yMin || 1)) * (LANE_HEIGHT - 34);
+          const rawPadding = Math.max(0.1, (maxValue - minValue) * 0.12);
+          const rawMid = (maxValue + minValue) / 2;
+          const rawHalfSpan = Math.max(0.1, (maxValue - minValue) / 2 + rawPadding) / verticalScale;
+          const yMin = rawMid - rawHalfSpan;
+          const yMax = rawMid + rawHalfSpan;
+          const yScale = (value: number) =>
+            laneTop + LANE_HEIGHT - 18 - ((value - yMin) / (yMax - yMin || 1)) * (LANE_HEIGHT - 34);
 
           return (
             <g key={lane.id}>
@@ -326,8 +467,8 @@ function Timeline({ samples, labels, isSelectionMode, onRangeSelected, selectedR
         {ticks.map((tick) => (
           <g key={tick}>
             <line className="time-grid" x1={xScale(tick)} x2={xScale(tick)} y1={TOP_PAD} y2={HEIGHT - BOTTOM_PAD} />
-            <text className="time-tick" x={xScale(tick)} y={HEIGHT - 10}>
-              {formatMs(tick - domainStart)}
+            <text className="time-tick" x={xScale(tick)} y={HEIGHT - 14}>
+              {formatTick(nearestSampleDate(samples, tick), viewSpan)}
             </text>
           </g>
         ))}
