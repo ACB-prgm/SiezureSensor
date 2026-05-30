@@ -105,7 +105,7 @@ npm install
 npm run dev
 ```
 
-Open `http://127.0.0.1:5173`.
+Open `http://127.0.0.1:5173` on the server Mac, or `http://192.168.0.114:5173` from another device on the same LAN.
 
 The workbench lets you:
 
@@ -115,7 +115,7 @@ The workbench lets you:
 - click `Select range`, drag across the timeline, and save a label
 - edit or delete existing labels
 
-Set `VITE_API_BASE_URL` if the API is not running at `http://127.0.0.1:8000`.
+By default, the workbench calls the API on the same hostname at port `8000`. Set `VITE_API_BASE_URL` if the API is somewhere else.
 
 ## Sprint 3 Device Upload Workflow
 

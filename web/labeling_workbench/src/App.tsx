@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import { createEvent, deleteEvent, listEvents, listSessionSamples, listSessions, updateEvent } from "./api";
+import { API_BASE_URL, createEvent, deleteEvent, listEvents, listSessionSamples, listSessions, updateEvent } from "./api";
 import Timeline from "./Timeline";
 import { EVENT_TYPES, type EventLabel, type EventPayload, type EventType, type SelectionRange, type SessionSample, type SessionSummary } from "./types";
 
@@ -216,7 +216,7 @@ function App() {
         </div>
         <div className="status-card">
           <span>API</span>
-          <strong>{import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000"}</strong>
+          <strong>{API_BASE_URL}</strong>
         </div>
       </section>
 

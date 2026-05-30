@@ -26,11 +26,19 @@ Open:
 http://127.0.0.1:5173
 ```
 
+From another device on the same LAN, open:
+
+```text
+http://192.168.0.114:5173
+```
+
 If the API runs elsewhere, create `web/labeling_workbench/.env`:
 
 ```sh
 VITE_API_BASE_URL=http://127.0.0.1:8000
 ```
+
+If the workbench is opened through a LAN address and `VITE_API_BASE_URL` is not set, it calls the API on the same hostname at port `8000`.
 
 ## Workflow
 
