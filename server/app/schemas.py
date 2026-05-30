@@ -7,6 +7,7 @@ EventType = Literal[
   "seizure",
   "sleep_twitch",
   "scratching",
+  "scooting",
   "shake_off",
   "walking",
   "running",
@@ -57,6 +58,16 @@ class EventIn(BaseModel):
     if self.start_device_ms >= self.end_device_ms:
       raise ValueError("start_device_ms must be less than end_device_ms")
     return self
+
+
+class EventUpdate(BaseModel):
+  session_id: str | None = Field(default=None, min_length=1)
+  event_type: EventType | None = None
+  severity: int | None = Field(default=None, ge=1, le=5)
+  start_device_ms: int | None = Field(default=None, ge=0)
+  end_device_ms: int | None = Field(default=None, ge=0)
+  source: str | None = Field(default=None, min_length=1)
+  notes: str | None = None
 
 
 class EventOut(EventIn):

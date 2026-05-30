@@ -97,3 +97,78 @@ def test_get_event_returns_correct_event_or_404(client):
   assert found.status_code == 200
   assert found.json()["id"] == event_id
   assert missing.status_code == 404
+
+
+def test_scooting_event_type_is_allowed(client):
+  create_session(client)
+  payload = valid_event_payload()
+  payload["event_type"] = "scooting"
+
+  response = client.post("/api/v1/events", json=payload)
+
+  assert response.status_code == 201
+  assert response.json()["event_type"] == "scooting"
+
+
+def test_patch_event_updates_fields_and_preserves_created_at(client):
+  create_session(client)
+  created = client.post("/api/v1/events", json=valid_event_payload()).json()
+
+  response = client.patch(
+    f"/api/v1/events/{created['id']}",
+    json={
+      "event_type": "walking",
+      "severity": None,
+      "start_device_ms": 184260,
+      "end_device_ms": 184520,
+      "source": "manual_review",
+      "notes": None,
+    },
+  )
+
+  assert response.status_code == 200
+  body = response.json()
+  assert body["event_type"] == "walking"
+  assert body["severity"] is None
+  assert body["start_device_ms"] == 184260
+  assert body["end_device_ms"] == 184520
+  assert body["source"] == "manual_review"
+  assert body["notes"] is None
+  assert body["created_at"] == created["created_at"]
+
+
+def test_patch_event_rejects_invalid_payloads(client):
+  create_session(client)
+  created = client.post("/api/v1/events", json=valid_event_payload()).json()
+
+  invalid_type = client.patch(f"/api/v1/events/{created['id']}", json={"event_type": "bad_type"})
+  invalid_severity = client.patch(f"/api/v1/events/{created['id']}", json={"severity": 6})
+  invalid_range = client.patch(
+    f"/api/v1/events/{created['id']}",
+    json={"start_device_ms": 500, "end_device_ms": 400},
+  )
+  missing_session = client.patch(f"/api/v1/events/{created['id']}", json={"session_id": "missing"})
+
+  assert invalid_type.status_code == 422
+  assert invalid_severity.status_code == 422
+  assert invalid_range.status_code == 422
+  assert missing_session.status_code == 404
+
+
+def test_patch_missing_event_returns_404(client):
+  response = client.patch("/api/v1/events/999", json={"event_type": "walking"})
+
+  assert response.status_code == 404
+
+
+def test_delete_event_removes_label_or_returns_404(client):
+  create_session(client)
+  created = client.post("/api/v1/events", json=valid_event_payload()).json()
+
+  deleted = client.delete(f"/api/v1/events/{created['id']}")
+  found_after_delete = client.get(f"/api/v1/events/{created['id']}")
+  missing_delete = client.delete("/api/v1/events/999")
+
+  assert deleted.status_code == 204
+  assert found_after_delete.status_code == 404
+  assert missing_delete.status_code == 404

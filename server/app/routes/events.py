@@ -1,11 +1,11 @@
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session as OrmSession
 
 from app.database import get_db
 from app.models import Event, Session
-from app.schemas import EventIn, EventOut
+from app.schemas import EventIn, EventOut, EventUpdate
 
 
 router = APIRouter(prefix="/api/v1/events", tags=["events"])
@@ -74,3 +74,58 @@ def get_event(event_id: int, db: OrmSession = Depends(get_db)) -> EventOut:
     )
 
   return event_to_out(event)
+
+
+@router.patch("/{event_id}", response_model=EventOut)
+def update_event(event_id: int, payload: EventUpdate, db: OrmSession = Depends(get_db)) -> EventOut:
+  event = db.get(Event, event_id)
+  if event is None:
+    raise HTTPException(
+      status_code=status.HTTP_404_NOT_FOUND,
+      detail="Event not found",
+    )
+
+  next_session_id = payload.session_id if payload.session_id is not None else event.session_id
+  next_start_device_ms = payload.start_device_ms if payload.start_device_ms is not None else event.start_device_ms
+  next_end_device_ms = payload.end_device_ms if payload.end_device_ms is not None else event.end_device_ms
+
+  if db.get(Session, next_session_id) is None:
+    raise HTTPException(
+      status_code=status.HTTP_404_NOT_FOUND,
+      detail="Session not found",
+    )
+  if next_start_device_ms >= next_end_device_ms:
+    raise HTTPException(
+      status_code=422,
+      detail="start_device_ms must be less than end_device_ms",
+    )
+
+  event.session_id = next_session_id
+  if payload.event_type is not None:
+    event.event_type = payload.event_type
+  if "severity" in payload.model_fields_set:
+    event.severity = payload.severity
+  event.start_device_ms = next_start_device_ms
+  event.end_device_ms = next_end_device_ms
+  if payload.source is not None:
+    event.source = payload.source
+  if "notes" in payload.model_fields_set:
+    event.notes = payload.notes
+
+  db.commit()
+  db.refresh(event)
+  return event_to_out(event)
+
+
+@router.delete("/{event_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_event(event_id: int, db: OrmSession = Depends(get_db)) -> Response:
+  event = db.get(Event, event_id)
+  if event is None:
+    raise HTTPException(
+      status_code=status.HTTP_404_NOT_FOUND,
+      detail="Event not found",
+    )
+
+  db.delete(event)
+  db.commit()
+  return Response(status_code=status.HTTP_204_NO_CONTENT)
