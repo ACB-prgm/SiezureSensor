@@ -4,8 +4,8 @@ from tests.test_imu_upload import valid_payload
 
 
 def create_session(client, session_id: str = "session-with-data") -> None:
+  assert client.post("/api/v1/sessions", json={"session_id": session_id, "device_id": "beanie-v0-001"}).status_code == 201
   payload = valid_payload()
-  payload["session_id"] = session_id
   response = client.post("/api/v1/imu/batch", json=payload)
   assert response.status_code == 200
 

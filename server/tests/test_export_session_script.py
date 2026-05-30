@@ -16,19 +16,20 @@ from tests.test_imu_upload import valid_payload
 
 
 def populate_labeled_session(client) -> str:
+  session_id = "script-session"
+  assert client.post("/api/v1/sessions", json={"session_id": session_id, "device_id": "beanie-v0-001"}).status_code == 201
   payload = valid_payload(sequence=7)
-  payload["session_id"] = "script-session"
   payload["device_ms_start"] = 1000
   response = client.post("/api/v1/imu/batch", json=payload)
   assert response.status_code == 200
 
-  event = valid_event_payload("script-session")
+  event = valid_event_payload(session_id)
   event["start_device_ms"] = 1020
   event["end_device_ms"] = 1040
   event["event_type"] = "walking"
   event_response = client.post("/api/v1/events", json=event)
   assert event_response.status_code == 201
-  return payload["session_id"]
+  return session_id
 
 
 def test_export_session_writes_csv_with_labels(client, tmp_path):

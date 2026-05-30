@@ -5,6 +5,7 @@ import {
   createEvent,
   createSession,
   deleteEvent,
+  getActiveSession,
   getApiControlStatus,
   getApiRuntimeStatus,
   listEvents,
@@ -12,11 +13,13 @@ import {
   listSessions,
   startApiService,
   stopApiService,
+  setActiveSession,
   updateEvent,
 } from "./api";
 import Timeline from "./Timeline";
 import {
   EVENT_TYPES,
+  type ActiveSessionSummary,
   type ApiControlStatus,
   type ApiRuntimeStatus,
   type EventLabel,
@@ -164,6 +167,7 @@ function App() {
   const [apiControlStatus, setApiControlStatus] = useState<ApiControlStatus | null>(null);
   const [apiRuntimeStatus, setApiRuntimeStatus] = useState<ApiRuntimeStatus | null>(null);
   const [apiStatusMessage, setApiStatusMessage] = useState<string | null>(null);
+  const [activeSession, setActiveSessionState] = useState<ActiveSessionSummary | null>(null);
   const [isApiStatusLoading, setIsApiStatusLoading] = useState(false);
   const [isApiActionRunning, setIsApiActionRunning] = useState(false);
   const [isApiControlAvailable, setIsApiControlAvailable] = useState(true);
@@ -175,6 +179,14 @@ function App() {
   const lastRuntimeSampleCountRef = useRef<number | null>(null);
   const selectedSessionIdRef = useRef<string | null>(null);
 
+  async function refreshActiveSession(deviceId = DEFAULT_SESSION_FORM.deviceId) {
+    try {
+      setActiveSessionState(await getActiveSession(deviceId));
+    } catch {
+      setActiveSessionState(null);
+    }
+  }
+
   async function loadSessions(showLoading = true) {
     try {
       if (showLoading) {
@@ -183,6 +195,7 @@ function App() {
       const result = await listSessions();
       setSessions(result);
       setSelectedSessionId((current) => current ?? result[0]?.session_id ?? null);
+      await refreshActiveSession();
       setError(null);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Failed to load sessions");
@@ -431,11 +444,22 @@ function App() {
       const created = await createSession(payload);
       const nextSessions = await listSessions();
       setSessions(nextSessions);
+      await refreshActiveSession(payload.device_id);
       setSelectedSessionId(created.session_id);
       setSessionForm(DEFAULT_SESSION_FORM);
       setError(null);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Failed to create session");
+    }
+  }
+
+  async function activateSession(session: SessionSummary) {
+    try {
+      const active = await setActiveSession(session.device_id, session.session_id);
+      setActiveSessionState(active);
+      setActionMessage(`Active session set to ${session.session_id}.`);
+    } catch (caught) {
+      setActionMessage(caught instanceof Error ? caught.message : "Failed to set active session");
     }
   }
 
@@ -499,6 +523,20 @@ function App() {
               <dt>Samples</dt>
               <dd>{apiRuntimeStatus ? apiRuntimeStatus.sample_count.toLocaleString() : "n/a"}</dd>
             </div>
+            <div>
+              <dt>Boot</dt>
+              <dd>{apiRuntimeStatus?.latest_boot_id ? apiRuntimeStatus.latest_boot_id.slice(-10) : "n/a"}</dd>
+            </div>
+            <div>
+              <dt>Queue / Drop</dt>
+              <dd>
+                {apiRuntimeStatus?.latest_queued_batch_count ?? "n/a"} / {apiRuntimeStatus?.latest_dropped_batch_count ?? "n/a"}
+              </dd>
+            </div>
+            <div>
+              <dt>RSSI</dt>
+              <dd>{apiRuntimeStatus?.latest_wifi_rssi ?? "n/a"}</dd>
+            </div>
           </dl>
           <div className="api-control-actions">
             <button disabled={!isApiControlAvailable || isApiActionRunning || isApiReachable} onClick={() => void startApi()} type="button">
@@ -524,22 +562,34 @@ function App() {
             <h2>Sessions</h2>
             <span>{isLoading ? "Loading" : `${sessions.length} found`}</span>
           </div>
+          <div className="active-session-card">
+            <span>Active session</span>
+            <strong>{activeSession?.session_id ?? "None"}</strong>
+          </div>
 
           {error ? <p className="error-message">{error}</p> : null}
 
           <div className="session-list">
             {sessions.map((session) => (
-              <button
-                className={session.session_id === selectedSessionId ? "session-row selected" : "session-row"}
-                key={session.session_id}
-                onClick={() => setSelectedSessionId(session.session_id)}
-                type="button"
-              >
-                <span className="session-id">{session.session_id}</span>
-                <span className="session-meta">
-                  {session.sample_count.toLocaleString()} samples · {formatDuration(session)}
-                </span>
-              </button>
+              <div className="session-row-shell" key={session.session_id}>
+                <button
+                  className={session.session_id === selectedSessionId ? "session-row selected" : "session-row"}
+                  onClick={() => setSelectedSessionId(session.session_id)}
+                  type="button"
+                >
+                  <span className="session-id">{session.session_id}</span>
+                  <span className="session-meta">
+                    {session.sample_count.toLocaleString()} samples · {formatDuration(session)}
+                  </span>
+                </button>
+                {activeSession?.session_id === session.session_id ? (
+                  <span className="active-session-pill">Active</span>
+                ) : (
+                  <button className="secondary-button" onClick={() => void activateSession(session)} type="button">
+                    Set active
+                  </button>
+                )}
+              </div>
             ))}
           </div>
 

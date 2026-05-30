@@ -8,6 +8,7 @@ from tests.test_imu_upload import valid_payload
 REQUIRED_COLUMNS = [
   "device_id",
   "session_id",
+  "boot_id",
   "batch_sequence",
   "sample_index",
   "device_ms",
@@ -29,8 +30,9 @@ def rows_from_response(response) -> list[dict[str, str]]:
 
 def insert_batch(client, session_id: str, sequence: int, device_ms_start: int = 1000):
   payload = valid_payload(sequence=sequence)
-  payload["session_id"] = session_id
   payload["device_ms_start"] = device_ms_start
+  create_response = client.post("/api/v1/sessions", json={"session_id": session_id, "device_id": payload["device_id"]})
+  assert create_response.status_code in {201, 409}
   response = client.post("/api/v1/imu/batch", json=payload)
   assert response.status_code == 200
   return payload

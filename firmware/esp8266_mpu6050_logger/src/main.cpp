@@ -13,9 +13,11 @@ constexpr uint8_t SCL_PIN = D1; // GPIO5
 constexpr uint32_t SERIAL_BAUD = 115200;
 constexpr uint32_t SAMPLE_INTERVAL_MS = 20; // 50 Hz
 constexpr uint16_t SAMPLES_PER_BATCH = 50;
+constexpr uint8_t QUEUED_BATCH_CAPACITY = 12; // ESP8266 RAM-safe backlog.
 constexpr bool ENABLE_STARTUP_I2C_SCAN = true;
 constexpr uint32_t WIFI_RETRY_INTERVAL_MS = 10000;
 constexpr uint32_t HTTP_TIMEOUT_MS = 5000;
+constexpr uint32_t UPLOAD_RETRY_INTERVAL_MS = 250;
 
 constexpr uint8_t MPU6050_ADDRESS = 0x68;
 constexpr uint8_t MPU6050_REG_SMPLRT_DIV = 0x19;
@@ -29,26 +31,38 @@ constexpr uint8_t MPU6050_REG_WHO_AM_I = 0x75;
 constexpr float ACCEL_LSB_PER_G = 16384.0F; // +/- 2 g
 constexpr float GYRO_LSB_PER_DPS = 131.0F;  // +/- 250 deg/s
 
-struct ImuReading {
-  float ax_g;
-  float ay_g;
-  float az_g;
-  float gx_dps;
-  float gy_dps;
-  float gz_dps;
+struct RawImuReading {
+  int16_t ax;
+  int16_t ay;
+  int16_t az;
+  int16_t gx;
+  int16_t gy;
+  int16_t gz;
 };
 
 struct BatchSample {
-  uint32_t dt_ms;
-  ImuReading reading;
+  uint16_t dt_ms;
+  RawImuReading reading;
 };
 
-BatchSample batch_samples[SAMPLES_PER_BATCH];
+struct PreparedBatch {
+  uint32_t sequence;
+  uint32_t device_ms_start;
+  uint16_t sample_count;
+  BatchSample samples[SAMPLES_PER_BATCH];
+};
+
+PreparedBatch current_batch = {};
+PreparedBatch queued_batches[QUEUED_BATCH_CAPACITY];
+uint8_t queue_head = 0;
+uint8_t queue_count = 0;
 uint32_t next_sample_ms = 0;
 uint32_t next_wifi_retry_ms = 0;
-uint32_t batch_device_ms_start = 0;
+uint32_t next_upload_attempt_ms = 0;
 uint32_t batch_sequence = 0;
-uint16_t batch_sample_count = 0;
+uint32_t dropped_batch_count = 0;
+String boot_id;
+String reset_reason;
 bool imu_ready = false;
 bool wifi_begin_called = false;
 
@@ -70,6 +84,8 @@ void printWiFiStatus() {
   if (isWiFiConnected()) {
     Serial.print(", IP: ");
     Serial.print(WiFi.localIP());
+    Serial.print(", RSSI: ");
+    Serial.print(WiFi.RSSI());
   }
   Serial.println();
 }
@@ -92,7 +108,9 @@ void maintainWiFi(uint32_t now_ms) {
     static bool printed_connected = false;
     if (!printed_connected) {
       Serial.print("Wi-Fi connected. Local IP: ");
-      Serial.println(WiFi.localIP());
+      Serial.print(WiFi.localIP());
+      Serial.print(", RSSI: ");
+      Serial.println(WiFi.RSSI());
       printed_connected = true;
     }
     return;
@@ -184,6 +202,14 @@ int16_t readInt16(uint8_t high_byte, uint8_t low_byte) {
   return static_cast<int16_t>((static_cast<uint16_t>(high_byte) << 8) | low_byte);
 }
 
+float accelRawToG(int16_t value) {
+  return static_cast<float>(value) / ACCEL_LSB_PER_G;
+}
+
+float gyroRawToDps(int16_t value) {
+  return static_cast<float>(value) / GYRO_LSB_PER_DPS;
+}
+
 bool initializeMpu6050() {
   uint8_t who_am_i = 0;
   if (!readRegister(MPU6050_REG_WHO_AM_I, who_am_i)) {
@@ -217,57 +243,87 @@ bool initializeMpu6050() {
   return true;
 }
 
-bool readImu(ImuReading &reading) {
+bool readImu(RawImuReading &reading) {
   uint8_t buffer[14] = {0};
   if (!readRegisters(MPU6050_REG_ACCEL_XOUT_H, buffer, sizeof(buffer))) {
     return false;
   }
 
-  const int16_t raw_ax = readInt16(buffer[0], buffer[1]);
-  const int16_t raw_ay = readInt16(buffer[2], buffer[3]);
-  const int16_t raw_az = readInt16(buffer[4], buffer[5]);
-  const int16_t raw_gx = readInt16(buffer[8], buffer[9]);
-  const int16_t raw_gy = readInt16(buffer[10], buffer[11]);
-  const int16_t raw_gz = readInt16(buffer[12], buffer[13]);
-
-  reading.ax_g = static_cast<float>(raw_ax) / ACCEL_LSB_PER_G;
-  reading.ay_g = static_cast<float>(raw_ay) / ACCEL_LSB_PER_G;
-  reading.az_g = static_cast<float>(raw_az) / ACCEL_LSB_PER_G;
-  reading.gx_dps = static_cast<float>(raw_gx) / GYRO_LSB_PER_DPS;
-  reading.gy_dps = static_cast<float>(raw_gy) / GYRO_LSB_PER_DPS;
-  reading.gz_dps = static_cast<float>(raw_gz) / GYRO_LSB_PER_DPS;
+  reading.ax = readInt16(buffer[0], buffer[1]);
+  reading.ay = readInt16(buffer[2], buffer[3]);
+  reading.az = readInt16(buffer[4], buffer[5]);
+  reading.gx = readInt16(buffer[8], buffer[9]);
+  reading.gy = readInt16(buffer[10], buffer[11]);
+  reading.gz = readInt16(buffer[12], buffer[13]);
 
   return true;
 }
 
-void resetBatch(uint32_t next_start_ms) {
-  batch_device_ms_start = next_start_ms;
-  batch_sample_count = 0;
+void resetCurrentBatch(uint32_t next_start_ms) {
+  current_batch.device_ms_start = next_start_ms;
+  current_batch.sample_count = 0;
 }
 
-void appendSampleToBatch(uint32_t sample_ms, const ImuReading &reading) {
-  if (batch_sample_count == 0) {
-    batch_device_ms_start = sample_ms;
+void appendSampleToCurrentBatch(uint32_t sample_ms, const RawImuReading &reading) {
+  if (current_batch.sample_count == 0) {
+    current_batch.device_ms_start = sample_ms;
   }
 
-  batch_samples[batch_sample_count] = BatchSample{
-      sample_ms - batch_device_ms_start,
+  current_batch.samples[current_batch.sample_count] = BatchSample{
+      static_cast<uint16_t>(sample_ms - current_batch.device_ms_start),
       reading,
   };
-  batch_sample_count++;
+  current_batch.sample_count++;
 }
 
-bool isBatchReady() {
-  return batch_sample_count >= SAMPLES_PER_BATCH;
+bool isCurrentBatchReady() {
+  return current_batch.sample_count >= SAMPLES_PER_BATCH;
 }
 
-void printBatchPrepared() {
-  Serial.print("Batch prepared: sequence=");
-  Serial.print(batch_sequence);
+uint8_t queueTailIndex() {
+  return (queue_head + queue_count) % QUEUED_BATCH_CAPACITY;
+}
+
+void dropOldestQueuedBatch() {
+  if (queue_count == 0) {
+    return;
+  }
+  Serial.print("Upload queue full; dropping oldest batch sequence=");
+  Serial.println(queued_batches[queue_head].sequence);
+  queue_head = (queue_head + 1) % QUEUED_BATCH_CAPACITY;
+  queue_count--;
+  dropped_batch_count++;
+}
+
+void enqueueCurrentBatch() {
+  if (queue_count >= QUEUED_BATCH_CAPACITY) {
+    dropOldestQueuedBatch();
+  }
+
+  current_batch.sequence = batch_sequence;
+  queued_batches[queueTailIndex()] = current_batch;
+  queue_count++;
+
+  Serial.print("Batch queued: sequence=");
+  Serial.print(current_batch.sequence);
   Serial.print(", samples=");
-  Serial.print(batch_sample_count);
+  Serial.print(current_batch.sample_count);
   Serial.print(", device_ms_start=");
-  Serial.println(batch_device_ms_start);
+  Serial.print(current_batch.device_ms_start);
+  Serial.print(", queue=");
+  Serial.print(queue_count);
+  Serial.print("/");
+  Serial.println(QUEUED_BATCH_CAPACITY);
+
+  batch_sequence++;
+}
+
+void popQueuedBatch() {
+  if (queue_count == 0) {
+    return;
+  }
+  queue_head = (queue_head + 1) % QUEUED_BATCH_CAPACITY;
+  queue_count--;
 }
 
 String uploadUrl() {
@@ -278,26 +334,32 @@ String uploadUrl() {
   return base_url + "/api/v1/imu/batch";
 }
 
-String buildBatchJson(uint32_t sequence) {
+String buildBatchJson(const PreparedBatch &batch) {
   JsonDocument doc;
   doc["device_id"] = DEVICE_ID;
+  doc["boot_id"] = boot_id;
   doc["firmware_version"] = FIRMWARE_VERSION;
-  doc["session_id"] = SESSION_ID;
-  doc["sequence"] = sequence;
+  doc["sequence"] = batch.sequence;
   doc["sample_hz"] = 50;
-  doc["device_ms_start"] = batch_device_ms_start;
+  doc["device_ms_start"] = batch.device_ms_start;
   doc["battery_mv"] = nullptr;
+  doc["reset_reason"] = reset_reason;
+  doc["wifi_rssi"] = isWiFiConnected() ? WiFi.RSSI() : 0;
+  doc["free_heap"] = ESP.getFreeHeap();
+  doc["queued_batch_count"] = queue_count;
+  doc["dropped_batch_count"] = dropped_batch_count;
 
   JsonArray samples = doc["samples"].to<JsonArray>();
-  for (uint16_t i = 0; i < batch_sample_count; i++) {
+  for (uint16_t i = 0; i < batch.sample_count; i++) {
+    const BatchSample &batch_sample = batch.samples[i];
     JsonObject sample = samples.add<JsonObject>();
-    sample["dt_ms"] = batch_samples[i].dt_ms;
-    sample["ax"] = batch_samples[i].reading.ax_g;
-    sample["ay"] = batch_samples[i].reading.ay_g;
-    sample["az"] = batch_samples[i].reading.az_g;
-    sample["gx"] = batch_samples[i].reading.gx_dps;
-    sample["gy"] = batch_samples[i].reading.gy_dps;
-    sample["gz"] = batch_samples[i].reading.gz_dps;
+    sample["dt_ms"] = batch_sample.dt_ms;
+    sample["ax"] = accelRawToG(batch_sample.reading.ax);
+    sample["ay"] = accelRawToG(batch_sample.reading.ay);
+    sample["az"] = accelRawToG(batch_sample.reading.az);
+    sample["gx"] = gyroRawToDps(batch_sample.reading.gx);
+    sample["gy"] = gyroRawToDps(batch_sample.reading.gy);
+    sample["gz"] = gyroRawToDps(batch_sample.reading.gz);
   }
 
   String payload;
@@ -305,19 +367,23 @@ String buildBatchJson(uint32_t sequence) {
   return payload;
 }
 
-void uploadBatch(uint32_t sequence) {
+bool uploadBatch(const PreparedBatch &batch) {
   if (!isWiFiConnected()) {
-    Serial.println("Skipping upload: Wi-Fi is not connected.");
-    return;
+    Serial.println("Deferring upload: Wi-Fi is not connected.");
+    return false;
   }
 
   const String url = uploadUrl();
-  const String payload = buildBatchJson(sequence);
+  const String payload = buildBatchJson(batch);
   WiFiClient client;
   HTTPClient http;
 
   Serial.print("Uploading batch sequence=");
-  Serial.print(sequence);
+  Serial.print(batch.sequence);
+  Serial.print(", boot_id=");
+  Serial.print(boot_id);
+  Serial.print(", queue=");
+  Serial.print(queue_count);
   Serial.print(", bytes=");
   Serial.print(payload.length());
   Serial.print(", url=");
@@ -325,8 +391,8 @@ void uploadBatch(uint32_t sequence) {
 
   http.setTimeout(HTTP_TIMEOUT_MS);
   if (!http.begin(client, url)) {
-    Serial.println("HTTP begin failed; dropping batch.");
-    return;
+    Serial.println("HTTP begin failed; keeping batch queued.");
+    return false;
   }
 
   http.addHeader("Content-Type", "application/json");
@@ -334,6 +400,7 @@ void uploadBatch(uint32_t sequence) {
   Serial.print("Upload HTTP status: ");
   Serial.println(status_code);
 
+  bool ok = status_code >= 200 && status_code < 300;
   if (status_code > 0) {
     Serial.print("Upload response: ");
     Serial.println(http.getString());
@@ -343,23 +410,57 @@ void uploadBatch(uint32_t sequence) {
   }
 
   http.end();
+  return ok;
+}
+
+void uploadOneQueuedBatch(uint32_t now_ms) {
+  if (queue_count == 0 || static_cast<int32_t>(now_ms - next_upload_attempt_ms) < 0) {
+    return;
+  }
+
+  if (uploadBatch(queued_batches[queue_head])) {
+    Serial.print("Upload accepted; removing queued batch. sequence=");
+    Serial.println(queued_batches[queue_head].sequence);
+    popQueuedBatch();
+  }
+
+  next_upload_attempt_ms = millis() + UPLOAD_RETRY_INTERVAL_MS;
+}
+
+void initializeBootIdentity() {
+  reset_reason = ESP.getResetReason();
+  randomSeed(ESP.getCycleCount() ^ micros() ^ ESP.getChipId());
+  char buffer[40] = {0};
+  snprintf(
+      buffer,
+      sizeof(buffer),
+      "%06X-%08lX-%08lX",
+      ESP.getChipId(),
+      static_cast<unsigned long>(micros()),
+      static_cast<unsigned long>(random(0x7fffffff)));
+  boot_id = String(buffer);
 }
 } // namespace
 
 void setup() {
   Serial.begin(SERIAL_BAUD);
   delay(200);
+  initializeBootIdentity();
 
   Serial.println();
-  Serial.println("Dog Seizure Sensor V0 - ESP8266 MPU-6050 bench read");
+  Serial.println("Dog Seizure Sensor V0 - ESP8266 MPU-6050 upload loop");
   Serial.println("Expected MPU-6050 address: 0x68");
   Serial.println("Wiring: SDA=D2/GPIO4, SCL=D1/GPIO5, VCC=3V3, GND=GND");
   Serial.print("Device ID: ");
   Serial.println(DEVICE_ID);
-  Serial.print("Session ID: ");
-  Serial.println(SESSION_ID);
+  Serial.print("Boot ID: ");
+  Serial.println(boot_id);
+  Serial.print("Reset reason: ");
+  Serial.println(reset_reason);
   Serial.print("Server URL: ");
   Serial.println(SERVER_URL);
+  Serial.print("Queue capacity: ");
+  Serial.println(QUEUED_BATCH_CAPACITY);
 
   Wire.begin(SDA_PIN, SCL_PIN);
   Wire.setClock(400000);
@@ -379,7 +480,8 @@ void setup() {
   }
 
   next_sample_ms = millis();
-  resetBatch(next_sample_ms);
+  next_upload_attempt_ms = next_sample_ms;
+  resetCurrentBatch(next_sample_ms);
 }
 
 void loop() {
@@ -393,7 +495,7 @@ void loop() {
       if (imu_ready) {
         Serial.println("IMU ready. Preparing 50-sample batches at 50 Hz.");
         next_sample_ms = millis();
-        resetBatch(next_sample_ms);
+        resetCurrentBatch(next_sample_ms);
       }
       next_retry_ms = now_ms + 1000;
     }
@@ -401,18 +503,14 @@ void loop() {
   }
 
   if (static_cast<int32_t>(now_ms - next_sample_ms) >= 0) {
-    ImuReading reading = {};
+    RawImuReading reading = {};
     if (readImu(reading)) {
-      appendSampleToBatch(now_ms, reading);
-      if (isBatchReady()) {
-        const uint32_t prepared_sequence = batch_sequence;
-        printBatchPrepared();
-        uploadBatch(prepared_sequence);
-        batch_sequence++;
+      appendSampleToCurrentBatch(now_ms, reading);
+      if (isCurrentBatchReady()) {
+        enqueueCurrentBatch();
         const uint32_t resume_ms = millis() + SAMPLE_INTERVAL_MS;
         next_sample_ms = resume_ms;
-        resetBatch(resume_ms);
-        return;
+        resetCurrentBatch(resume_ms);
       }
     } else {
       Serial.println("IMU read failed. Will retry initialization.");
@@ -424,4 +522,6 @@ void loop() {
       next_sample_ms = millis() + SAMPLE_INTERVAL_MS;
     }
   }
+
+  uploadOneQueuedBatch(millis());
 }

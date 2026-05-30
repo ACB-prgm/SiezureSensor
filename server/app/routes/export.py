@@ -14,6 +14,7 @@ router = APIRouter(prefix="/api/v1/export", tags=["export"])
 EXPORT_COLUMNS = [
   "device_id",
   "session_id",
+  "boot_id",
   "batch_sequence",
   "sample_index",
   "device_ms",
@@ -33,6 +34,7 @@ def sample_to_row(sample: IMUSample) -> dict[str, object]:
   return {
     "device_id": sample.device_id,
     "session_id": sample.session_id,
+    "boot_id": sample.boot_id or f"legacy-{sample.session_id}",
     "batch_sequence": sample.batch_sequence,
     "sample_index": sample.sample_index,
     "device_ms": sample.device_ms,

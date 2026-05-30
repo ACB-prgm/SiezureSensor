@@ -1,15 +1,20 @@
 from app.models import Batch, Device, IMUSample, Session
 
 
-def valid_payload(sequence: int = 1234) -> dict:
+def valid_payload(sequence: int = 1234, boot_id: str = "boot-test-001") -> dict:
   return {
     "device_id": "beanie-v0-001",
+    "boot_id": boot_id,
     "firmware_version": "0.1.0",
-    "session_id": "2026-05-23T20-15-00-beanie-v0-001",
     "sequence": sequence,
     "sample_hz": 50,
     "device_ms_start": 184240,
     "battery_mv": None,
+    "reset_reason": "Power on",
+    "wifi_rssi": -55,
+    "free_heap": 42000,
+    "queued_batch_count": 0,
+    "dropped_batch_count": 0,
     "samples": [
       {
         "dt_ms": 0,
@@ -53,8 +58,14 @@ def test_valid_batch_returns_ack_and_persists_rows(client, db_session):
 
   samples = db_session.query(IMUSample).order_by(IMUSample.sample_index).all()
   assert [sample.device_ms for sample in samples] == [184240, 184260]
+  assert {sample.boot_id for sample in samples} == {payload["boot_id"]}
 
   batch = db_session.query(Batch).one()
+  assert batch.session_id.endswith("-beanie-v0-001-auto")
+  assert batch.boot_id == payload["boot_id"]
+  assert batch.reset_reason == "Power on"
+  assert batch.wifi_rssi == -55
+  assert batch.free_heap == 42000
   assert batch.sample_count == len(payload["samples"])
   assert '"device_id":"beanie-v0-001"' in batch.raw_payload_json
 
@@ -71,6 +82,15 @@ def test_empty_samples_is_rejected(client):
 def test_missing_required_top_level_field_is_rejected(client):
   payload = valid_payload()
   del payload["device_id"]
+
+  response = client.post("/api/v1/imu/batch", json=payload)
+
+  assert response.status_code == 422
+
+
+def test_missing_boot_id_is_rejected(client):
+  payload = valid_payload()
+  del payload["boot_id"]
 
   response = client.post("/api/v1/imu/batch", json=payload)
 
@@ -96,3 +116,16 @@ def test_duplicate_sequence_returns_409_without_duplicate_samples(client, db_ses
   assert second_response.status_code == 409
   assert db_session.query(Batch).count() == 1
   assert db_session.query(IMUSample).count() == len(payload["samples"])
+
+
+def test_same_sequence_from_different_boots_is_accepted(client, db_session):
+  first_payload = valid_payload(sequence=42, boot_id="boot-a")
+  second_payload = valid_payload(sequence=42, boot_id="boot-b")
+
+  first_response = client.post("/api/v1/imu/batch", json=first_payload)
+  second_response = client.post("/api/v1/imu/batch", json=second_payload)
+
+  assert first_response.status_code == 200
+  assert second_response.status_code == 200
+  assert db_session.query(Batch).count() == 2
+  assert db_session.query(IMUSample).count() == len(first_payload["samples"]) + len(second_payload["samples"])

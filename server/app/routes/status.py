@@ -28,6 +28,7 @@ def api_status(db: OrmSession = Depends(get_db)) -> dict[str, object]:
     .first()
   )
   latest_sample = db.query(IMUSample).order_by(IMUSample.id.desc()).first()
+  latest_batch = db.query(Batch).order_by(Batch.id.desc()).first()
 
   return {
     "status": "ok",
@@ -39,6 +40,12 @@ def api_status(db: OrmSession = Depends(get_db)) -> dict[str, object]:
     "latest_batch_received_at": batch_stats[1],
     "latest_sample_received_at": sample_stats[1],
     "latest_device_ms": latest_sample.device_ms if latest_sample else None,
+    "latest_boot_id": latest_batch.boot_id if latest_batch else None,
+    "latest_reset_reason": latest_batch.reset_reason if latest_batch else None,
+    "latest_wifi_rssi": latest_batch.wifi_rssi if latest_batch else None,
+    "latest_free_heap": latest_batch.free_heap if latest_batch else None,
+    "latest_queued_batch_count": latest_batch.queued_batch_count if latest_batch else None,
+    "latest_dropped_batch_count": latest_batch.dropped_batch_count if latest_batch else None,
     "latest_session": (
       {
         "session_id": latest_session[0],

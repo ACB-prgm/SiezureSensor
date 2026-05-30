@@ -153,6 +153,8 @@ h2 {
 }
 
 .api-status-card dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   margin: 0.25rem 0;
 }
 
@@ -230,6 +232,47 @@ dt {
 .session-list {
   display: grid;
   gap: 0.7rem;
+}
+
+.active-session-card {
+  display: grid;
+  gap: 0.3rem;
+  margin-bottom: 0.8rem;
+  border-radius: 16px;
+  padding: 0.8rem;
+  background: #203228;
+  color: #f8efe0;
+}
+
+.active-session-card span,
+.active-session-pill {
+  color: rgba(248, 239, 224, 0.68);
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.active-session-card strong {
+  overflow-wrap: anywhere;
+  font-size: 0.86rem;
+}
+
+.session-row-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.55rem;
+  align-items: center;
+}
+
+.session-row-shell > .secondary-button {
+  white-space: nowrap;
+}
+
+.active-session-pill {
+  border-radius: 999px;
+  padding: 0.45rem 0.65rem;
+  background: #203228;
 }
 
 .new-session-panel {

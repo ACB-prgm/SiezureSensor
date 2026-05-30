@@ -1,6 +1,7 @@
 import type {
   ApiControlStatus,
   ApiRuntimeStatus,
+  ActiveSessionSummary,
   EventLabel,
   EventPayload,
   SessionCreatePayload,
@@ -58,6 +59,18 @@ export function stopApiService(): Promise<ApiControlStatus> {
 export function createSession(payload: SessionCreatePayload): Promise<SessionSummary> {
   return requestJson<SessionSummary>("/api/v1/sessions", {
     body: JSON.stringify(payload),
+    headers: { "Content-Type": "application/json" },
+    method: "POST",
+  });
+}
+
+export function getActiveSession(deviceId: string): Promise<ActiveSessionSummary | null> {
+  return requestJson<ActiveSessionSummary | null>(`/api/v1/devices/${encodeURIComponent(deviceId)}/active-session`);
+}
+
+export function setActiveSession(deviceId: string, sessionId: string): Promise<ActiveSessionSummary> {
+  return requestJson<ActiveSessionSummary>(`/api/v1/devices/${encodeURIComponent(deviceId)}/active-session`, {
+    body: JSON.stringify({ session_id: sessionId }),
     headers: { "Content-Type": "application/json" },
     method: "POST",
   });

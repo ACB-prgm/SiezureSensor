@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import init_db
-from app.routes import events, export, health, imu, sessions, status
+from app.routes import devices, events, export, health, imu, sessions, status
 
 
 @asynccontextmanager
@@ -28,6 +28,7 @@ app.add_middleware(
 )
 app.include_router(health.router)
 app.include_router(imu.router)
+app.include_router(devices.router)
 app.include_router(events.router)
 app.include_router(export.router)
 app.include_router(sessions.router)

@@ -13,8 +13,8 @@ from tests.test_imu_upload import valid_payload
 
 
 def populate_event_window(client) -> int:
+  assert client.post("/api/v1/sessions", json={"session_id": "plot-session", "device_id": "beanie-v0-001"}).status_code == 201
   payload = valid_payload(sequence=11)
-  payload["session_id"] = "plot-session"
   payload["device_ms_start"] = 1000
   payload["samples"] = [
     {"dt_ms": 0, "ax": 0.0, "ay": 0.0, "az": 1.0, "gx": 0.0, "gy": 0.0, "gz": 0.0},

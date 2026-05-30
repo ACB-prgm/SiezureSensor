@@ -9,4 +9,3 @@
 #define SERVER_URL "http://192.168.1.100:8000"
 #define DEVICE_ID "beanie-v0-001"
 #define FIRMWARE_VERSION "0.1.0"
-#define SESSION_ID "2026-05-25T08-00-00-beanie-v0-001"

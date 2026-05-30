@@ -24,21 +24,35 @@ class Session(Base):
   notes = Column(Text, nullable=True)
 
 
+class ActiveDeviceSession(Base):
+  __tablename__ = "active_device_sessions"
+
+  device_id = Column(String, ForeignKey("devices.device_id"), primary_key=True)
+  session_id = Column(String, ForeignKey("sessions.session_id"), nullable=False)
+  updated_at = Column(String, nullable=False)
+
+
 class Batch(Base):
   __tablename__ = "batches"
   __table_args__ = (
-    UniqueConstraint("device_id", "session_id", "sequence", name="uq_batch_device_session_sequence"),
+    UniqueConstraint("device_id", "boot_id", "sequence", name="uq_batch_device_boot_sequence"),
   )
 
   id = Column(Integer, primary_key=True, autoincrement=True)
   device_id = Column(String, nullable=False)
   session_id = Column(String, nullable=False)
+  boot_id = Column(String, nullable=False)
   sequence = Column(Integer, nullable=False)
   sample_hz = Column(Integer, nullable=False)
   device_ms_start = Column(Integer, nullable=False)
   server_received_at = Column(String, nullable=False)
   sample_count = Column(Integer, nullable=False)
   battery_mv = Column(Integer, nullable=True)
+  reset_reason = Column(String, nullable=True)
+  wifi_rssi = Column(Integer, nullable=True)
+  free_heap = Column(Integer, nullable=True)
+  queued_batch_count = Column(Integer, nullable=True)
+  dropped_batch_count = Column(Integer, nullable=True)
   raw_payload_json = Column(Text, nullable=False)
 
 
@@ -48,6 +62,7 @@ class IMUSample(Base):
   id = Column(Integer, primary_key=True, autoincrement=True)
   device_id = Column(String, nullable=False)
   session_id = Column(String, nullable=False)
+  boot_id = Column(String, nullable=False)
   batch_sequence = Column(Integer, nullable=False)
   sample_index = Column(Integer, nullable=False)
   device_ms = Column(Integer, nullable=False)

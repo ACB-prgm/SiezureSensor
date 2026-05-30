@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session as OrmSession
 from app.database import get_db
 from app.models import Batch, Device, IMUSample, Session
 from app.schemas import SessionCreateIn, SessionSampleOut, SessionSummaryOut
+from app.session_assignment import set_active_session
 
 
 router = APIRouter(prefix="/api/v1/sessions", tags=["sessions"])
@@ -21,6 +22,7 @@ def sample_to_out(sample: IMUSample) -> SessionSampleOut:
   return SessionSampleOut(
     device_id=sample.device_id,
     session_id=sample.session_id,
+    boot_id=sample.boot_id or f"legacy-{sample.session_id}",
     batch_sequence=sample.batch_sequence,
     sample_index=sample.sample_index,
     device_ms=sample.device_ms,
@@ -98,6 +100,7 @@ def create_session(payload: SessionCreateIn, db: OrmSession = Depends(get_db)) -
     notes=payload.notes,
   )
   db.add(session)
+  set_active_session(db, payload.device_id, payload.session_id, now_iso())
   db.commit()
   db.refresh(session)
 

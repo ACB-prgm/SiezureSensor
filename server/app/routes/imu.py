@@ -5,8 +5,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as OrmSession
 
 from app.database import get_db
-from app.models import Batch, Device, IMUSample, Session
+from app.models import Batch, IMUSample
 from app.schemas import IMUBatchAck, IMUBatchIn
+from app.session_assignment import ensure_device, get_or_create_active_session
 
 
 router = APIRouter(prefix="/api/v1/imu", tags=["imu"])
@@ -22,40 +23,25 @@ def upload_imu_batch(payload: IMUBatchIn, db: OrmSession = Depends(get_db)) -> I
 
   try:
     with db.begin():
-      device = db.get(Device, payload.device_id)
-      if device is None:
-        device = Device(
-          device_id=payload.device_id,
-          firmware_version=payload.firmware_version,
-          created_at=received_at,
-        )
-        db.add(device)
-      else:
-        device.firmware_version = payload.firmware_version or device.firmware_version
-
-      session = db.get(Session, payload.session_id)
-      if session is None:
-        db.add(
-          Session(
-            session_id=payload.session_id,
-            device_id=payload.device_id,
-            started_at=None,
-            ended_at=None,
-            mount_location=None,
-            notes=None,
-          )
-        )
+      ensure_device(db, payload.device_id, payload.firmware_version, received_at)
+      session = get_or_create_active_session(db, payload.device_id, received_at)
 
       db.add(
         Batch(
           device_id=payload.device_id,
-          session_id=payload.session_id,
+          session_id=session.session_id,
+          boot_id=payload.boot_id,
           sequence=payload.sequence,
           sample_hz=payload.sample_hz,
           device_ms_start=payload.device_ms_start,
           server_received_at=received_at,
           sample_count=len(payload.samples),
           battery_mv=payload.battery_mv,
+          reset_reason=payload.reset_reason,
+          wifi_rssi=payload.wifi_rssi,
+          free_heap=payload.free_heap,
+          queued_batch_count=payload.queued_batch_count,
+          dropped_batch_count=payload.dropped_batch_count,
           raw_payload_json=payload.model_dump_json(),
         )
       )
@@ -64,7 +50,8 @@ def upload_imu_batch(payload: IMUBatchIn, db: OrmSession = Depends(get_db)) -> I
         db.add(
           IMUSample(
             device_id=payload.device_id,
-            session_id=payload.session_id,
+            session_id=session.session_id,
+            boot_id=payload.boot_id,
             batch_sequence=payload.sequence,
             sample_index=index,
             device_ms=payload.device_ms_start + sample.dt_ms,
@@ -81,7 +68,7 @@ def upload_imu_batch(payload: IMUBatchIn, db: OrmSession = Depends(get_db)) -> I
     db.rollback()
     raise HTTPException(
       status_code=status.HTTP_409_CONFLICT,
-      detail="Duplicate batch sequence for device and session",
+      detail="Duplicate batch sequence for device boot",
     ) from exc
 
   return IMUBatchAck(

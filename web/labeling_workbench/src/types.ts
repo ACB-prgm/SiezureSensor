@@ -58,6 +58,7 @@ export type SessionSummary = {
 export type SessionSample = {
   device_id: string;
   session_id: string;
+  boot_id: string;
   batch_sequence: number;
   sample_index: number;
   device_ms: number;
@@ -104,11 +105,24 @@ export type ApiRuntimeStatus = {
   latest_batch_received_at: string | null;
   latest_sample_received_at: string | null;
   latest_device_ms: number | null;
+  latest_boot_id: string | null;
+  latest_reset_reason: string | null;
+  latest_wifi_rssi: number | null;
+  latest_free_heap: number | null;
+  latest_queued_batch_count: number | null;
+  latest_dropped_batch_count: number | null;
   latest_session: {
     session_id: string;
     sample_count: number;
     latest_received_at: string | null;
   } | null;
+};
+
+export type ActiveSessionSummary = {
+  device_id: string;
+  session_id: string;
+  updated_at: string;
+  session: SessionSummary;
 };
 
 export type ApiControlStatus = {

@@ -28,12 +28,17 @@ class IMUSampleIn(BaseModel):
 
 class IMUBatchIn(BaseModel):
   device_id: str = Field(min_length=1)
+  boot_id: str = Field(min_length=1)
   firmware_version: str | None = None
-  session_id: str = Field(min_length=1)
   sequence: int = Field(ge=0)
   sample_hz: int = Field(gt=0)
   device_ms_start: int = Field(ge=0)
   battery_mv: int | None = None
+  reset_reason: str | None = None
+  wifi_rssi: int | None = None
+  free_heap: int | None = Field(default=None, ge=0)
+  queued_batch_count: int | None = Field(default=None, ge=0)
+  dropped_batch_count: int | None = Field(default=None, ge=0)
   samples: list[IMUSampleIn] = Field(min_length=1)
 
 
@@ -99,9 +104,21 @@ class SessionCreateIn(BaseModel):
   notes: str | None = None
 
 
+class ActiveSessionIn(BaseModel):
+  session_id: str = Field(min_length=1)
+
+
+class ActiveSessionOut(BaseModel):
+  device_id: str
+  session_id: str
+  updated_at: str
+  session: SessionSummaryOut
+
+
 class SessionSampleOut(BaseModel):
   device_id: str
   session_id: str
+  boot_id: str
   batch_sequence: int
   sample_index: int
   device_ms: int
