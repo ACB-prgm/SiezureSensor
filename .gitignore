@@ -15,3 +15,5 @@ data/*
 .DS_Store
 .ipynb_checkpoints/
 .pytest_cache/
+web/labeling_workbench/node_modules/
+web/labeling_workbench/dist/
