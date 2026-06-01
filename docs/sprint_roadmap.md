@@ -105,6 +105,7 @@ Outcome:
 - Mixed-overlap windows are marked or excluded by documented rules.
 - Baseline feature CSVs can be exported for RandomForest and LightGBM/XGBoost model experiments.
 - Evaluation guidance prevents leakage by splitting by session/day/dog before window generation.
+- Usage notes are in [Sprint 5 Dataset Prep](sprint_5_dataset_prep.md).
 
 Rationale:
 
