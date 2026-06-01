@@ -53,6 +53,8 @@ class Batch(Base):
   free_heap = Column(Integer, nullable=True)
   queued_batch_count = Column(Integer, nullable=True)
   dropped_batch_count = Column(Integer, nullable=True)
+  max_sample_lateness_ms = Column(Integer, nullable=True)
+  upload_skip_count = Column(Integer, nullable=True)
   raw_payload_json = Column(Text, nullable=False)
 
 

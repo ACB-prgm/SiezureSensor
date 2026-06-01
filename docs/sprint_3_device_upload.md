@@ -19,14 +19,13 @@ Edit `config.h`:
 #define SERVER_URL "http://192.168.1.100:8000"
 #define DEVICE_ID "beanie-v0-001"
 #define FIRMWARE_VERSION "0.1.0"
-#define SESSION_ID "2026-05-25T08-00-00-beanie-v0-001"
 ```
 
 Rules:
 
 - `config.h` is ignored by Git and must not be committed.
 - `SERVER_URL` should not include a trailing slash.
-- Use a fresh `SESSION_ID` for each recording session unless you intentionally cleared old data.
+- Recording sessions are assigned by the server; the ESP only sends `device_id`, `boot_id`, sequence, timing, and diagnostics.
 - `battery_mv` is sent as JSON `null` in V0.
 
 ## Start Server
@@ -66,10 +65,12 @@ Expected serial behavior:
 
 - MPU-6050 initializes.
 - ESP8266 prints Wi-Fi state and local IP when connected.
-- Firmware prepares one 50-sample batch per second.
+- Firmware prepares 50-sample batches at the 50 Hz sample cadence.
+- Firmware prioritizes sampling before upload and skips upload attempts that are too close to the next sample deadline.
 - Firmware posts JSON to `{SERVER_URL}/api/v1/imu/batch`.
 - Firmware prints HTTP status and server response.
-- If Wi-Fi or upload fails, firmware logs the failure and continues preparing future batches.
+- If Wi-Fi or upload fails, firmware keeps unsent batches in a bounded RAM queue and drops the oldest batch if the queue fills.
+- Timing diagnostics include queue depth, dropped batch count, max sample lateness, and upload skip count.
 
 Successful response example:
 
@@ -94,3 +95,7 @@ sqlite3 data/seizure_sensor_v0.sqlite \
 ```
 
 Each successful firmware upload should create one batch row and 50 IMU sample rows.
+
+## Pending Sprint 6 Validation
+
+The current sampling-priority upload loop is build-verified only until the ESP can be flashed again. Sprint 6 must confirm on hardware that inter-sample gaps stay near 20 ms during live upload and that `max_sample_lateness_ms` remains acceptable.

@@ -39,6 +39,8 @@ class IMUBatchIn(BaseModel):
   free_heap: int | None = Field(default=None, ge=0)
   queued_batch_count: int | None = Field(default=None, ge=0)
   dropped_batch_count: int | None = Field(default=None, ge=0)
+  max_sample_lateness_ms: int | None = Field(default=None, ge=0)
+  upload_skip_count: int | None = Field(default=None, ge=0)
   samples: list[IMUSampleIn] = Field(min_length=1)
 
 

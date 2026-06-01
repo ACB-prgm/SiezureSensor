@@ -46,6 +46,8 @@ def api_status(db: OrmSession = Depends(get_db)) -> dict[str, object]:
     "latest_free_heap": latest_batch.free_heap if latest_batch else None,
     "latest_queued_batch_count": latest_batch.queued_batch_count if latest_batch else None,
     "latest_dropped_batch_count": latest_batch.dropped_batch_count if latest_batch else None,
+    "latest_max_sample_lateness_ms": latest_batch.max_sample_lateness_ms if latest_batch else None,
+    "latest_upload_skip_count": latest_batch.upload_skip_count if latest_batch else None,
     "latest_session": (
       {
         "session_id": latest_session[0],

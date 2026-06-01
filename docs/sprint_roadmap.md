@@ -123,6 +123,7 @@ Outcome:
 - Device runs for 30 minutes without obvious firmware failure.
 - At least one 15-minute baseline session is collected.
 - Sequence gaps are documented.
+- Firmware sampling-gap patch is flashed and inter-sample gaps are checked against the target 20 ms cadence.
 - Accel and gyro magnitudes are reviewed for plausibility.
 - Synthetic activity checklist is complete.
 - Known activity periods are labeled in the workbench.

@@ -175,6 +175,8 @@ Expected successful upload response:
 
 If uploads fail, check that `SERVER_URL` points at the Mac's LAN API URL and that `./scripts/start_services.sh` is running. Sequence numbers restart at `0` on firmware reboot, but the server separates reboots by `boot_id`.
 
+The firmware prioritizes sampling before upload and records queue depth, dropped batch count, max sample lateness, and upload skip count. This sampling-gap patch is build-verified until the ESP can be flashed and validated in Sprint 6.
+
 ## Firmware Setup
 
 The ESP8266 firmware lives in `firmware/esp8266_mpu6050_logger`.
@@ -185,7 +187,7 @@ PLATFORMIO_CORE_DIR=/Users/aaronbastian/Code/SiezureSensor/.platformio-core \
   /Users/aaronbastian/Code/SiezureSensor/.venv-platformio/bin/pio run
 ```
 
-The current firmware bench build initializes the MPU-6050 and prints accelerometer and gyroscope readings at approximately 50 Hz.
+The current firmware initializes the MPU-6050, batches 50 Hz IMU samples, and uploads queued batches to the FastAPI server over Wi-Fi.
 
 ## V0 Limitations
 

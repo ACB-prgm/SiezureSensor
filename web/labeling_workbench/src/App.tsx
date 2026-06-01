@@ -555,6 +555,12 @@ function App() {
               <dt>RSSI</dt>
               <dd>{apiRuntimeStatus?.latest_wifi_rssi ?? "n/a"}</dd>
             </div>
+            <div>
+              <dt>Late / Skip</dt>
+              <dd>
+                {apiRuntimeStatus?.latest_max_sample_lateness_ms ?? "n/a"} / {apiRuntimeStatus?.latest_upload_skip_count ?? "n/a"}
+              </dd>
+            </div>
           </dl>
           <div className="api-control-actions">
             <button disabled={!isApiControlAvailable || isApiActionRunning || isApiReachable} onClick={() => void startApi()} type="button">

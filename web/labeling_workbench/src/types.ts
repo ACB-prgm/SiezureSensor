@@ -111,6 +111,8 @@ export type ApiRuntimeStatus = {
   latest_free_heap: number | null;
   latest_queued_batch_count: number | null;
   latest_dropped_batch_count: number | null;
+  latest_max_sample_lateness_ms: number | null;
+  latest_upload_skip_count: number | null;
   latest_session: {
     session_id: string;
     sample_count: number;

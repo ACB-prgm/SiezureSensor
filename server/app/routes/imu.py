@@ -42,6 +42,8 @@ def upload_imu_batch(payload: IMUBatchIn, db: OrmSession = Depends(get_db)) -> I
           free_heap=payload.free_heap,
           queued_batch_count=payload.queued_batch_count,
           dropped_batch_count=payload.dropped_batch_count,
+          max_sample_lateness_ms=payload.max_sample_lateness_ms,
+          upload_skip_count=payload.upload_skip_count,
           raw_payload_json=payload.model_dump_json(),
         )
       )

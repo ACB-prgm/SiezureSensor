@@ -89,17 +89,21 @@ def migrate_batches_table(engine: Engine) -> None:
     return
 
   columns = column_names(engine, "batches")
-  needs_rebuild = not {
-    "boot_id",
-    "reset_reason",
-    "wifi_rssi",
-    "free_heap",
-    "queued_batch_count",
-    "dropped_batch_count",
-  }.issubset(columns)
+  optional_columns = {
+    "reset_reason": "reset_reason VARCHAR",
+    "wifi_rssi": "wifi_rssi INTEGER",
+    "free_heap": "free_heap INTEGER",
+    "queued_batch_count": "queued_batch_count INTEGER",
+    "dropped_batch_count": "dropped_batch_count INTEGER",
+    "max_sample_lateness_ms": "max_sample_lateness_ms INTEGER",
+    "upload_skip_count": "upload_skip_count INTEGER",
+  }
+  needs_rebuild = "boot_id" not in columns
   needs_rebuild = needs_rebuild or not has_unique_index(engine, "batches", ["device_id", "boot_id", "sequence"])
 
   if not needs_rebuild:
+    for column_name, column_sql in optional_columns.items():
+      add_column_if_missing(engine, "batches", column_name, column_sql)
     return
 
   def select_expr(column_name: str, fallback_sql: str) -> str:
@@ -126,6 +130,8 @@ def migrate_batches_table(engine: Engine) -> None:
           free_heap INTEGER,
           queued_batch_count INTEGER,
           dropped_batch_count INTEGER,
+          max_sample_lateness_ms INTEGER,
+          upload_skip_count INTEGER,
           raw_payload_json TEXT NOT NULL,
           CONSTRAINT uq_batch_device_boot_sequence UNIQUE (device_id, boot_id, sequence)
         )
@@ -151,6 +157,8 @@ def migrate_batches_table(engine: Engine) -> None:
           free_heap,
           queued_batch_count,
           dropped_batch_count,
+          max_sample_lateness_ms,
+          upload_skip_count,
           raw_payload_json
         )
         SELECT
@@ -169,6 +177,8 @@ def migrate_batches_table(engine: Engine) -> None:
           {select_expr("free_heap", "NULL")},
           {select_expr("queued_batch_count", "NULL")},
           {select_expr("dropped_batch_count", "NULL")},
+          {select_expr("max_sample_lateness_ms", "NULL")},
+          {select_expr("upload_skip_count", "NULL")},
           raw_payload_json
         FROM batches
         """

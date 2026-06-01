@@ -15,6 +15,8 @@ def valid_payload(sequence: int = 1234, boot_id: str = "boot-test-001") -> dict:
     "free_heap": 42000,
     "queued_batch_count": 0,
     "dropped_batch_count": 0,
+    "max_sample_lateness_ms": 7,
+    "upload_skip_count": 3,
     "samples": [
       {
         "dt_ms": 0,
@@ -66,6 +68,8 @@ def test_valid_batch_returns_ack_and_persists_rows(client, db_session):
   assert batch.reset_reason == "Power on"
   assert batch.wifi_rssi == -55
   assert batch.free_heap == 42000
+  assert batch.max_sample_lateness_ms == 7
+  assert batch.upload_skip_count == 3
   assert batch.sample_count == len(payload["samples"])
   assert '"device_id":"beanie-v0-001"' in batch.raw_payload_json
 

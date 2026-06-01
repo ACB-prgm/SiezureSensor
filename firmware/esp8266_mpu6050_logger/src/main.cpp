@@ -16,8 +16,9 @@ constexpr uint16_t SAMPLES_PER_BATCH = 50;
 constexpr uint8_t QUEUED_BATCH_CAPACITY = 12; // ESP8266 RAM-safe backlog.
 constexpr bool ENABLE_STARTUP_I2C_SCAN = true;
 constexpr uint32_t WIFI_RETRY_INTERVAL_MS = 10000;
-constexpr uint32_t HTTP_TIMEOUT_MS = 5000;
+constexpr uint32_t HTTP_TIMEOUT_MS = 900;
 constexpr uint32_t UPLOAD_RETRY_INTERVAL_MS = 250;
+constexpr uint32_t UPLOAD_SAMPLE_GUARD_MS = 8;
 
 constexpr uint8_t MPU6050_ADDRESS = 0x68;
 constexpr uint8_t MPU6050_REG_SMPLRT_DIV = 0x19;
@@ -61,6 +62,8 @@ uint32_t next_wifi_retry_ms = 0;
 uint32_t next_upload_attempt_ms = 0;
 uint32_t batch_sequence = 0;
 uint32_t dropped_batch_count = 0;
+uint32_t max_sample_lateness_ms = 0;
+uint32_t upload_skip_count = 0;
 String boot_id;
 String reset_reason;
 bool imu_ready = false;
@@ -348,6 +351,8 @@ String buildBatchJson(const PreparedBatch &batch) {
   doc["free_heap"] = ESP.getFreeHeap();
   doc["queued_batch_count"] = queue_count;
   doc["dropped_batch_count"] = dropped_batch_count;
+  doc["max_sample_lateness_ms"] = max_sample_lateness_ms;
+  doc["upload_skip_count"] = upload_skip_count;
 
   JsonArray samples = doc["samples"].to<JsonArray>();
   for (uint16_t i = 0; i < batch.sample_count; i++) {
@@ -415,6 +420,13 @@ bool uploadBatch(const PreparedBatch &batch) {
 
 void uploadOneQueuedBatch(uint32_t now_ms) {
   if (queue_count == 0 || static_cast<int32_t>(now_ms - next_upload_attempt_ms) < 0) {
+    return;
+  }
+
+  const int32_t ms_until_next_sample = static_cast<int32_t>(next_sample_ms - now_ms);
+  if (ms_until_next_sample <= static_cast<int32_t>(UPLOAD_SAMPLE_GUARD_MS)) {
+    upload_skip_count++;
+    next_upload_attempt_ms = now_ms + UPLOAD_RETRY_INTERVAL_MS;
     return;
   }
 
@@ -505,19 +517,21 @@ void loop() {
   if (static_cast<int32_t>(now_ms - next_sample_ms) >= 0) {
     RawImuReading reading = {};
     if (readImu(reading)) {
+      const uint32_t sample_lateness_ms = now_ms - next_sample_ms;
+      if (sample_lateness_ms > max_sample_lateness_ms) {
+        max_sample_lateness_ms = sample_lateness_ms;
+      }
       appendSampleToCurrentBatch(now_ms, reading);
+      next_sample_ms += SAMPLE_INTERVAL_MS;
       if (isCurrentBatchReady()) {
         enqueueCurrentBatch();
-        const uint32_t resume_ms = millis() + SAMPLE_INTERVAL_MS;
-        next_sample_ms = resume_ms;
-        resetCurrentBatch(resume_ms);
+        resetCurrentBatch(next_sample_ms);
       }
     } else {
       Serial.println("IMU read failed. Will retry initialization.");
       imu_ready = false;
     }
 
-    next_sample_ms += SAMPLE_INTERVAL_MS;
     if (static_cast<int32_t>(millis() - next_sample_ms) > static_cast<int32_t>(SAMPLE_INTERVAL_MS)) {
       next_sample_ms = millis() + SAMPLE_INTERVAL_MS;
     }
