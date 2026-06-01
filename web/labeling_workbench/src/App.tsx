@@ -76,6 +76,14 @@ function formatTimestamp(value: string | null): string {
   return new Date(value).toLocaleString();
 }
 
+function formatClock(value: Date): string {
+  return value.toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+}
+
 function formatAge(value: string | null): string {
   if (!value) {
     return "never";
@@ -168,6 +176,7 @@ function App() {
   const [apiRuntimeStatus, setApiRuntimeStatus] = useState<ApiRuntimeStatus | null>(null);
   const [apiStatusMessage, setApiStatusMessage] = useState<string | null>(null);
   const [activeSession, setActiveSessionState] = useState<ActiveSessionSummary | null>(null);
+  const [currentTime, setCurrentTime] = useState(() => new Date());
   const [isApiStatusLoading, setIsApiStatusLoading] = useState(false);
   const [isApiActionRunning, setIsApiActionRunning] = useState(false);
   const [isApiControlAvailable, setIsApiControlAvailable] = useState(true);
@@ -193,9 +202,11 @@ function App() {
         setIsLoading(true);
       }
       const result = await listSessions();
+      const active = await getActiveSession(DEFAULT_SESSION_FORM.deviceId).catch(() => null);
+      const activeSessionId = active && result.some((session) => session.session_id === active.session_id) ? active.session_id : null;
       setSessions(result);
-      setSelectedSessionId((current) => current ?? result[0]?.session_id ?? null);
-      await refreshActiveSession();
+      setActiveSessionState(active);
+      setSelectedSessionId((current) => current ?? activeSessionId ?? result[0]?.session_id ?? null);
       setError(null);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Failed to load sessions");
@@ -265,6 +276,13 @@ function App() {
 
   useEffect(() => {
     void loadSessions();
+  }, []);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      setCurrentTime(new Date());
+    }, 1000);
+    return () => window.clearInterval(interval);
   }, []);
 
   useEffect(() => {
@@ -658,6 +676,10 @@ function App() {
                 </div>
               </dl>
               {timelineError ? <p className="error-message">{timelineError}</p> : null}
+              <div className="timeline-live-clock" aria-label="Current local time">
+                <span>Current time</span>
+                <strong>{formatClock(currentTime)}</strong>
+              </div>
               {isTimelineLoading ? (
                 <div className="empty-timeline">
                   <strong>Loading timeline.</strong>
@@ -683,13 +705,20 @@ function App() {
                 <div className="label-form-panel">
                   <div className="panel-heading compact">
                     <h2>{editingLabel ? `Editing label #${editingLabel.id}` : "Create Label"}</h2>
-                    <button
-                      className={isSelectionMode ? "secondary-button active" : "secondary-button"}
-                      onClick={() => setIsSelectionMode((current) => !current)}
-                      type="button"
-                    >
-                      {isSelectionMode ? "Drag on timeline" : "Select range"}
-                    </button>
+                    <div className="label-heading-actions">
+                      {editingLabel ? (
+                        <button className="secondary-button" onClick={clearForm} type="button">
+                          Done
+                        </button>
+                      ) : null}
+                      <button
+                        className={isSelectionMode ? "secondary-button active" : "secondary-button"}
+                        onClick={() => setIsSelectionMode((current) => !current)}
+                        type="button"
+                      >
+                        {isSelectionMode ? "Drag on timeline" : "Select range"}
+                      </button>
+                    </div>
                   </div>
                   <div className="range-readout">
                     {selectedRange
@@ -807,7 +836,7 @@ function App() {
                   </div>
                   <div className="label-list">
                     {labels.map((label) => (
-                      <div className="label-row" key={label.id}>
+                      <div className={label.id === selectedLabelId ? "label-row selected" : "label-row"} key={label.id}>
                         <div>
                           <strong>{label.event_type}</strong>
                           <span>

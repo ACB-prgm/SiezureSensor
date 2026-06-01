@@ -67,6 +67,7 @@ const TOP_PAD = 20;
 const BOTTOM_PAD = 44;
 const HEIGHT = TOP_PAD + BOTTOM_PAD + LANES.length * LANE_HEIGHT;
 const MIN_SPAN_MS = 1000;
+const DEFAULT_LIVE_SPAN_MS = 10 * 60 * 1000;
 
 function eventColor(eventType: string): string {
   const colors: Record<string, string> = {
@@ -95,6 +96,13 @@ function clampRange(start: number, end: number, min: number, max: number): [numb
     return [max - span, max];
   }
   return [start, end];
+}
+
+function latestRange(domain: [number, number], preferredSpan = DEFAULT_LIVE_SPAN_MS): [number, number] {
+  const [domainStart, domainEnd] = domain;
+  const totalSpan = domainEnd - domainStart;
+  const span = Math.min(totalSpan, Math.max(MIN_SPAN_MS, Math.min(preferredSpan, totalSpan)));
+  return [domainEnd - span, domainEnd];
 }
 
 function formatTick(date: Date, spanMs: number): string {
@@ -181,12 +189,14 @@ function Timeline({
 }: TimelineProps) {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const [viewRange, setViewRange] = useState<[number, number] | null>(null);
+  const [isFollowingLatest, setIsFollowingLatest] = useState(true);
   const [dragStart, setDragStart] = useState<{ pointerX: number; range: [number, number] } | null>(null);
   const [selectionDrag, setSelectionDrag] = useState<{ timeMs: number; deviceMs: number } | null>(null);
   const [handleDrag, setHandleDrag] = useState<"start" | "end" | null>(null);
   const [selectionDraft, setSelectionDraft] = useState<SelectionRange | null>(null);
   const [selectionTimeDraft, setSelectionTimeDraft] = useState<[number, number] | null>(null);
   const [signalScale, setSignalScale] = useState(1);
+  const lastAppliedFocusKeyRef = useRef<string | null>(null);
 
   const timelineSamples = useMemo(
     () =>
@@ -200,6 +210,8 @@ function Timeline({
     [samples],
   );
 
+  const sessionKey = timelineSamples[0]?.session_id ?? null;
+
   const domain = useMemo<[number, number] | null>(() => {
     if (timelineSamples.length === 0) {
       return null;
@@ -208,25 +220,42 @@ function Timeline({
   }, [timelineSamples]);
 
   useEffect(() => {
+    setIsFollowingLatest(true);
+    setViewRange(null);
+  }, [sessionKey]);
+
+  useEffect(() => {
     setViewRange((current) => {
       if (!domain) {
         return null;
       }
-      if (!current) {
-        return domain;
+      if (!current || isFollowingLatest) {
+        return latestRange(domain);
       }
       return clampRange(current[0], current[1], domain[0], domain[1]);
     });
-  }, [domain]);
+  }, [domain, isFollowingLatest]);
 
   useEffect(() => {
+    const focusKey = focusRange
+      ? `${selectedLabelId ?? "range"}:${focusRange.startDeviceMs}:${focusRange.endDeviceMs}`
+      : null;
+    if (!focusKey) {
+      lastAppliedFocusKeyRef.current = null;
+      return;
+    }
+    if (lastAppliedFocusKeyRef.current === focusKey) {
+      return;
+    }
     if (domain && focusRange) {
       const timeRange = timeRangeForDeviceRange(timelineSamples, focusRange);
       if (timeRange) {
+        lastAppliedFocusKeyRef.current = focusKey;
+        setIsFollowingLatest(false);
         setViewRange(clampRange(timeRange[0], timeRange[1], domain[0], domain[1]));
       }
     }
-  }, [domain, focusRange, timelineSamples]);
+  }, [domain, focusRange, selectedLabelId, timelineSamples]);
 
   const currentRange = viewRange ?? domain;
   const visibleSamples = useMemo(() => {
@@ -267,6 +296,7 @@ function Timeline({
     function handleNativeWheel(event: WheelEvent) {
       event.preventDefault();
       event.stopPropagation();
+      setIsFollowingLatest(false);
 
       if (Math.abs(event.deltaX) > Math.abs(event.deltaY) || event.shiftKey) {
         const deltaMs = event.deltaX * (activeSpan / plotWidth);
@@ -304,6 +334,12 @@ function Timeline({
   const plotWidth = WIDTH - LEFT_PAD - RIGHT_PAD;
 
   function setClampedViewRange(start: number, end: number) {
+    setIsFollowingLatest(false);
+    setViewRange(clampRange(start, end, domainStart, domainEnd));
+  }
+
+  function setManualViewRange(start: number, end: number) {
+    setIsFollowingLatest(false);
     setViewRange(clampRange(start, end, domainStart, domainEnd));
   }
 
@@ -329,8 +365,8 @@ function Timeline({
   }
 
   function jumpToLatest() {
-    const latestSpan = Math.min(totalSpan, Math.max(MIN_SPAN_MS, Math.min(viewSpan, 120_000)));
-    setClampedViewRange(domainEnd - latestSpan, domainEnd);
+    setIsFollowingLatest(true);
+    setViewRange(latestRange([domainStart, domainEnd], viewSpan));
   }
 
   function handlePointerDown(event: React.PointerEvent<SVGSVGElement>) {
@@ -343,19 +379,23 @@ function Timeline({
     const selectedTimeRange = selectedRange ? timeRangeForDeviceRange(timelineSamples, selectedRange) : null;
 
     if (selectedTimeRange && Math.abs(pointerTimeMs - selectedTimeRange[0]) <= handleToleranceMs) {
+      setIsFollowingLatest(false);
       setHandleDrag("start");
       return;
     }
     if (selectedTimeRange && Math.abs(pointerTimeMs - selectedTimeRange[1]) <= handleToleranceMs) {
+      setIsFollowingLatest(false);
       setHandleDrag("end");
       return;
     }
     if (isSelectionMode) {
+      setIsFollowingLatest(false);
       setSelectionDrag({ timeMs: pointerTimeMs, deviceMs: pointerDeviceMs });
       setSelectionDraft({ startDeviceMs: pointerDeviceMs, endDeviceMs: pointerDeviceMs });
       setSelectionTimeDraft([pointerTimeMs, pointerTimeMs]);
       return;
     }
+    setIsFollowingLatest(false);
     setDragStart({ pointerX: event.clientX, range: activeRange });
   }
 
@@ -432,7 +472,7 @@ function Timeline({
           <button type="button" onClick={() => zoomAround((viewStart + viewEnd) / 2, 0.8)}>
             +
           </button>
-          <button type="button" onClick={() => setViewRange(domain)}>
+          <button type="button" onClick={() => setManualViewRange(domain[0], domain[1])}>
             Reset
           </button>
           <button type="button" onClick={jumpToLatest}>
@@ -450,7 +490,7 @@ function Timeline({
             onChange={(event) => {
               const ratio = Number(event.target.value) / 100;
               const nextStart = domainStart + (totalSpan - viewSpan) * ratio;
-              setClampedViewRange(nextStart, nextStart + viewSpan);
+              setManualViewRange(nextStart, nextStart + viewSpan);
             }}
             step={0.1}
             type="range"
@@ -585,10 +625,15 @@ function Timeline({
           );
         })}
 
-        {ticks.map((tick) => (
+        {ticks.map((tick, index) => (
           <g key={tick}>
             <line className="time-grid" x1={xScale(tick)} x2={xScale(tick)} y1={TOP_PAD} y2={HEIGHT - BOTTOM_PAD} />
-            <text className="time-tick" x={xScale(tick)} y={HEIGHT - 14}>
+            <text
+              className="time-tick"
+              textAnchor={index === 0 ? "start" : index === ticks.length - 1 ? "end" : "middle"}
+              x={xScale(tick)}
+              y={HEIGHT - 14}
+            >
               {formatTick(new Date(tick), viewSpan)}
             </text>
           </g>

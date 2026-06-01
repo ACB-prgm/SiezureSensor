@@ -89,7 +89,15 @@ Exports are written to `data/exports/` by default. Plots are written to `data/pl
 
 The local labeling workbench is a browser UI for visually inspecting sessions and creating event labels.
 
-Start the API:
+Start all local services from the repository root:
+
+```sh
+./scripts/start_services.sh
+```
+
+The script starts FastAPI on `0.0.0.0:8000` and the workbench on `0.0.0.0:5173`, waits until both are reachable, prints local and LAN URLs, and stops child processes when you press `Ctrl+C`.
+
+If you want to start services manually, start the API:
 
 ```sh
 cd server
@@ -134,7 +142,7 @@ cp firmware/esp8266_mpu6050_logger/include/config.example.h \
   firmware/esp8266_mpu6050_logger/include/config.h
 ```
 
-Edit `config.h` with your Wi-Fi credentials, LAN server URL, device ID, firmware version, and session ID. `SERVER_URL` should not include a trailing slash.
+Edit `config.h` with your Wi-Fi credentials, LAN server URL, device ID, and firmware version. `SERVER_URL` should not include a trailing slash. Recording sessions are assigned by the server, not the ESP.
 
 Start the server on the LAN:
 
@@ -165,7 +173,7 @@ Expected successful upload response:
 {"status":"ok","device_id":"beanie-v0-001","sequence":0,"samples_received":50}
 ```
 
-If uploads return `409 Conflict`, change `SESSION_ID` before reflashing or clear the local database. Sequence numbers restart at `0` on firmware reboot.
+If uploads fail, check that `SERVER_URL` points at the Mac's LAN API URL and that `./scripts/start_services.sh` is running. Sequence numbers restart at `0` on firmware reboot, but the server separates reboots by `boot_id`.
 
 ## Firmware Setup
 

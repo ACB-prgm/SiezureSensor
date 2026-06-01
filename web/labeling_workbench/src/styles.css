@@ -389,6 +389,30 @@ dd {
   overflow: hidden;
 }
 
+.timeline-live-clock {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  border: 1px solid rgba(32, 37, 31, 0.09);
+  border-radius: 18px;
+  padding: 0.8rem 1rem;
+  background: rgba(251, 248, 239, 0.74);
+}
+
+.timeline-live-clock span {
+  color: #697566;
+  font-size: 0.78rem;
+  font-weight: 900;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.timeline-live-clock strong {
+  color: #20251f;
+  font-size: 1.25rem;
+}
+
 .timeline-toolbar {
   display: flex;
   align-items: center;
@@ -430,6 +454,13 @@ dd {
   display: flex;
   align-items: center;
   gap: 0.45rem;
+}
+
+.label-heading-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  justify-content: flex-end;
 }
 
 .zoom-controls span {
@@ -522,10 +553,6 @@ dd {
   fill: #697566;
   font-size: 11px;
   font-weight: 800;
-}
-
-.time-tick {
-  text-anchor: middle;
 }
 
 .label-overlay-text {
@@ -676,9 +703,16 @@ dd {
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
+  border: 2px solid transparent;
   border-radius: 16px;
   padding: 0.8rem;
   background: rgba(255, 252, 244, 0.8);
+}
+
+.label-row.selected {
+  border-color: #e99a3c;
+  background: rgba(233, 154, 60, 0.18);
+  box-shadow: 0 0 0 4px rgba(233, 154, 60, 0.12);
 }
 
 .label-row div:first-child {
