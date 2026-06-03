@@ -64,6 +64,20 @@ export function createSession(payload: SessionCreatePayload): Promise<SessionSum
   });
 }
 
+export async function deleteSession(sessionId: string): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/api/v1/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
+  if (!response.ok) {
+    let message = `Request failed with ${response.status}: ${response.statusText}`;
+    try {
+      const body = (await response.json()) as { detail?: string };
+      message = body.detail ?? message;
+    } catch {
+      // Keep the HTTP fallback if the API did not return JSON.
+    }
+    throw new Error(message);
+  }
+}
+
 export function getActiveSession(deviceId: string): Promise<ActiveSessionSummary | null> {
   return requestJson<ActiveSessionSummary | null>(`/api/v1/devices/${encodeURIComponent(deviceId)}/active-session`);
 }

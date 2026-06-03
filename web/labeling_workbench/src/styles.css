@@ -265,8 +265,19 @@ dt {
   align-items: center;
 }
 
-.session-row-shell > .secondary-button {
+.session-row-shell > .secondary-button,
+.session-actions {
   white-space: nowrap;
+}
+
+.session-actions {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.session-actions .secondary-button,
+.session-actions .danger-button {
+  padding: 0.55rem 0.7rem;
 }
 
 .active-session-pill {

@@ -13,22 +13,19 @@ router = APIRouter(prefix="/api/v1/status", tags=["status"])
 
 @router.get("")
 def api_status(db: OrmSession = Depends(get_db)) -> dict[str, object]:
-  sample_stats = db.query(
-    func.count(IMUSample.id),
-    func.max(IMUSample.server_received_at),
-  ).one()
   batch_stats = db.query(
     func.count(Batch.id),
-    func.max(Batch.server_received_at),
+    func.coalesce(func.sum(Batch.sample_count), 0),
   ).one()
-  latest_session = (
-    db.query(IMUSample.session_id, func.count(IMUSample.id), func.max(IMUSample.server_received_at))
-    .group_by(IMUSample.session_id)
-    .order_by(func.max(IMUSample.server_received_at).desc())
-    .first()
-  )
   latest_sample = db.query(IMUSample).order_by(IMUSample.id.desc()).first()
   latest_batch = db.query(Batch).order_by(Batch.id.desc()).first()
+  latest_session_sample_count = (
+    db.query(func.coalesce(func.sum(Batch.sample_count), 0))
+    .filter(Batch.session_id == latest_batch.session_id)
+    .scalar()
+    if latest_batch
+    else None
+  )
 
   return {
     "status": "ok",
@@ -36,9 +33,9 @@ def api_status(db: OrmSession = Depends(get_db)) -> dict[str, object]:
     "database_path": str(get_database_path()),
     "session_count": db.query(func.count(Session.session_id)).scalar() or 0,
     "batch_count": batch_stats[0] or 0,
-    "sample_count": sample_stats[0] or 0,
-    "latest_batch_received_at": batch_stats[1],
-    "latest_sample_received_at": sample_stats[1],
+    "sample_count": batch_stats[1] or 0,
+    "latest_batch_received_at": latest_batch.server_received_at if latest_batch else None,
+    "latest_sample_received_at": latest_sample.server_received_at if latest_sample else None,
     "latest_device_ms": latest_sample.device_ms if latest_sample else None,
     "latest_boot_id": latest_batch.boot_id if latest_batch else None,
     "latest_reset_reason": latest_batch.reset_reason if latest_batch else None,
@@ -50,11 +47,11 @@ def api_status(db: OrmSession = Depends(get_db)) -> dict[str, object]:
     "latest_upload_skip_count": latest_batch.upload_skip_count if latest_batch else None,
     "latest_session": (
       {
-        "session_id": latest_session[0],
-        "sample_count": latest_session[1],
-        "latest_received_at": latest_session[2],
+        "session_id": latest_batch.session_id,
+        "sample_count": latest_session_sample_count or 0,
+        "latest_received_at": latest_batch.server_received_at,
       }
-      if latest_session
+      if latest_batch
       else None
     ),
   }

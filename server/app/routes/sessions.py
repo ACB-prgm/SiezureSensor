@@ -1,17 +1,18 @@
 from datetime import UTC, datetime
 from math import sqrt
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session as OrmSession
 
 from app.database import get_db
-from app.models import Batch, Device, IMUSample, Session
+from app.models import ActiveDeviceSession, Batch, Device, Event, IMUSample, Session
 from app.schemas import SessionCreateIn, SessionSampleOut, SessionSummaryOut
 from app.session_assignment import set_active_session
 
 
 router = APIRouter(prefix="/api/v1/sessions", tags=["sessions"])
+LARGE_SESSION_TAIL_THRESHOLD = 100_000
 
 
 def now_iso() -> str:
@@ -41,16 +42,22 @@ def sample_to_out(sample: IMUSample) -> SessionSampleOut:
 def summarize_session(db: OrmSession, session: Session) -> SessionSummaryOut:
   sample_stats = (
     db.query(
-      func.count(IMUSample.id),
       func.min(IMUSample.device_ms),
       func.max(IMUSample.device_ms),
-      func.min(IMUSample.server_received_at),
-      func.max(IMUSample.server_received_at),
     )
     .filter(IMUSample.session_id == session.session_id)
     .one()
   )
-  batch_count = db.query(func.count(Batch.id)).filter(Batch.session_id == session.session_id).scalar() or 0
+  batch_stats = (
+    db.query(
+      func.count(Batch.id),
+      func.coalesce(func.sum(Batch.sample_count), 0),
+      func.min(Batch.server_received_at),
+      func.max(Batch.server_received_at),
+    )
+    .filter(Batch.session_id == session.session_id)
+    .one()
+  )
 
   return SessionSummaryOut(
     session_id=session.session_id,
@@ -59,12 +66,12 @@ def summarize_session(db: OrmSession, session: Session) -> SessionSummaryOut:
     ended_at=session.ended_at,
     mount_location=session.mount_location,
     notes=session.notes,
-    sample_count=sample_stats[0] or 0,
-    batch_count=batch_count,
-    min_device_ms=sample_stats[1],
-    max_device_ms=sample_stats[2],
-    first_server_received_at=sample_stats[3],
-    last_server_received_at=sample_stats[4],
+    sample_count=batch_stats[1] or 0,
+    batch_count=batch_stats[0] or 0,
+    min_device_ms=sample_stats[0],
+    max_device_ms=sample_stats[1],
+    first_server_received_at=batch_stats[2],
+    last_server_received_at=batch_stats[3],
   )
 
 
@@ -107,6 +114,30 @@ def create_session(payload: SessionCreateIn, db: OrmSession = Depends(get_db)) -
   return summarize_session(db, session)
 
 
+@router.delete("/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_session(session_id: str, db: OrmSession = Depends(get_db)) -> Response:
+  session = db.get(Session, session_id)
+  if session is None:
+    raise HTTPException(
+      status_code=status.HTTP_404_NOT_FOUND,
+      detail="Session not found",
+    )
+
+  active = db.query(ActiveDeviceSession).filter(ActiveDeviceSession.session_id == session_id).first()
+  if active is not None:
+    raise HTTPException(
+      status_code=status.HTTP_409_CONFLICT,
+      detail="Cannot delete the active session. Set another active session first.",
+    )
+
+  db.query(Event).filter(Event.session_id == session_id).delete(synchronize_session=False)
+  db.query(IMUSample).filter(IMUSample.session_id == session_id).delete(synchronize_session=False)
+  db.query(Batch).filter(Batch.session_id == session_id).delete(synchronize_session=False)
+  db.delete(session)
+  db.commit()
+  return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.get("/{session_id}/samples", response_model=list[SessionSampleOut])
 def list_session_samples(
   session_id: str,
@@ -133,8 +164,21 @@ def list_session_samples(
   if end_device_ms is not None:
     query = query.filter(IMUSample.device_ms <= end_device_ms)
 
-  total_samples = query.count()
+  if start_device_ms is None and end_device_ms is None:
+    total_samples = (
+      db.query(func.coalesce(func.sum(Batch.sample_count), 0))
+      .filter(Batch.session_id == session_id)
+      .scalar()
+      or 0
+    )
+  else:
+    total_samples = query.count()
   if total_samples > max_points:
+    if total_samples > LARGE_SESSION_TAIL_THRESHOLD and start_device_ms is None and end_device_ms is None:
+      samples = query.order_by(IMUSample.id.desc()).limit(max_points).all()
+      samples = sorted(samples, key=lambda sample: sample.id)
+      return [sample_to_out(sample) for sample in samples]
+
     tail_count = min(5000, max(1, max_points // 4))
     tail_samples = query.order_by(IMUSample.id.desc()).limit(tail_count).all()
     oldest_tail_id = min((sample.id for sample in tail_samples), default=None)

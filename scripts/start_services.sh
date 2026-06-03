@@ -11,6 +11,8 @@ API_PORT="${API_PORT:-8000}"
 WEB_HOST="${WEB_HOST:-0.0.0.0}"
 WEB_PORT="${WEB_PORT:-5173}"
 API_BASE_URL="${API_BASE_URL:-http://127.0.0.1:$API_PORT}"
+API_STARTUP_ATTEMPTS="${API_STARTUP_ATTEMPTS:-120}"
+WEB_STARTUP_ATTEMPTS="${WEB_STARTUP_ATTEMPTS:-40}"
 
 api_pid=""
 web_pid=""
@@ -100,7 +102,7 @@ else
     "$SERVER_PYTHON" -m uvicorn app.main:app --host "$API_HOST" --port "$API_PORT"
   ) &
   api_pid="$!"
-  wait_for_url "$API_BASE_URL/health" "FastAPI"
+  wait_for_url "$API_BASE_URL/health" "FastAPI" "$API_STARTUP_ATTEMPTS"
 fi
 
 WEB_LOCAL_URL="http://127.0.0.1:$WEB_PORT"
@@ -113,7 +115,7 @@ else
     npm run dev -- --host "$WEB_HOST" --port "$WEB_PORT"
   ) &
   web_pid="$!"
-  wait_for_url "$WEB_LOCAL_URL" "Workbench"
+  wait_for_url "$WEB_LOCAL_URL" "Workbench" "$WEB_STARTUP_ATTEMPTS"
 fi
 
 LAN_IP="$(local_ip || true)"

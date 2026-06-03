@@ -2,7 +2,7 @@ from collections.abc import Generator
 from pathlib import Path
 import os
 
-from sqlalchemy import inspect, text
+from sqlalchemy import event, inspect, text
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
@@ -33,9 +33,10 @@ def get_engine() -> Engine:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     _engine = create_engine(
       f"sqlite:///{db_path}",
-      connect_args={"check_same_thread": False},
+      connect_args={"check_same_thread": False, "timeout": 30},
       future=True,
     )
+    configure_sqlite(_engine)
     _engine_path = db_path
     _SessionLocal = sessionmaker(
       autocommit=False,
@@ -45,6 +46,16 @@ def get_engine() -> Engine:
     )
 
   return _engine
+
+
+def configure_sqlite(engine: Engine) -> None:
+  @event.listens_for(engine, "connect")
+  def set_sqlite_pragmas(dbapi_connection, _) -> None:
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute("PRAGMA synchronous=NORMAL")
+    cursor.execute("PRAGMA busy_timeout=30000")
+    cursor.close()
 
 
 def get_session_local() -> sessionmaker[Session]:
@@ -196,9 +207,28 @@ def migrate_imu_samples_table(engine: Engine) -> None:
   add_column_if_missing(engine, "imu_samples", "boot_id", "boot_id VARCHAR")
 
 
+def create_index_if_missing(engine: Engine, index_name: str, table_name: str, columns_sql: str) -> None:
+  with engine.begin() as connection:
+    connection.execute(text(f"CREATE INDEX IF NOT EXISTS {index_name} ON {table_name} ({columns_sql})"))
+
+
+def create_query_indexes(engine: Engine) -> None:
+  inspector = inspect(engine)
+  table_names = set(inspector.get_table_names())
+  if "imu_samples" in table_names:
+    create_index_if_missing(engine, "ix_imu_samples_session_id", "imu_samples", "session_id")
+    create_index_if_missing(engine, "ix_imu_samples_session_id_id", "imu_samples", "session_id, id")
+    create_index_if_missing(engine, "ix_imu_samples_session_id_device_ms", "imu_samples", "session_id, device_ms")
+  if "batches" in table_names:
+    create_index_if_missing(engine, "ix_batches_session_id", "batches", "session_id")
+    create_index_if_missing(engine, "ix_batches_session_id_received", "batches", "session_id, server_received_at")
+    create_index_if_missing(engine, "ix_batches_id_received", "batches", "id, server_received_at")
+
+
 def migrate_existing_db(engine: Engine) -> None:
   migrate_batches_table(engine)
   migrate_imu_samples_table(engine)
+  create_query_indexes(engine)
 
 
 def init_db() -> None:

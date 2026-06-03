@@ -1,4 +1,5 @@
 from tests.test_export import insert_batch
+from app.models import Batch, Event, IMUSample, Session
 
 
 def test_create_session_succeeds_with_new_device(client):
@@ -92,3 +93,41 @@ def test_list_session_samples_rejects_invalid_range(client):
   )
 
   assert response.status_code == 400
+
+
+def test_delete_session_removes_owned_data(client, db_session):
+  insert_batch(client, "session-a", 1)
+  insert_batch(client, "session-b", 2)
+  event = {
+    "session_id": "session-a",
+    "event_type": "walking",
+    "severity": 1,
+    "start_device_ms": 1000,
+    "end_device_ms": 1020,
+    "source": "manual",
+    "notes": "junk",
+  }
+  assert client.post("/api/v1/events", json=event).status_code == 201
+
+  response = client.delete("/api/v1/sessions/session-a")
+
+  assert response.status_code == 204
+  assert db_session.get(Session, "session-a") is None
+  assert db_session.query(Batch).filter(Batch.session_id == "session-a").count() == 0
+  assert db_session.query(IMUSample).filter(IMUSample.session_id == "session-a").count() == 0
+  assert db_session.query(Event).filter(Event.session_id == "session-a").count() == 0
+  assert db_session.get(Session, "session-b") is not None
+
+
+def test_delete_active_session_is_rejected(client):
+  insert_batch(client, "session-a", 1)
+
+  response = client.delete("/api/v1/sessions/session-a")
+
+  assert response.status_code == 409
+
+
+def test_delete_missing_session_returns_404(client):
+  response = client.delete("/api/v1/sessions/missing")
+
+  assert response.status_code == 404

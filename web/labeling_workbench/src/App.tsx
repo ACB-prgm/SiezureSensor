@@ -5,6 +5,7 @@ import {
   createEvent,
   createSession,
   deleteEvent,
+  deleteSession,
   getActiveSession,
   getApiControlStatus,
   getApiRuntimeStatus,
@@ -411,6 +412,35 @@ function App() {
     }
   }
 
+  async function removeSession(session: SessionSummary) {
+    const isActive = activeSession?.session_id === session.session_id;
+    if (isActive) {
+      setActionMessage("Set another active session before deleting this one.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Delete session "${session.session_id}" and all of its samples, batches, and labels? This cannot be undone.`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      await deleteSession(session.session_id);
+      if (selectedSessionId === session.session_id) {
+        setSelectedSessionId(null);
+        setSamples([]);
+        setLabels([]);
+        clearForm();
+      }
+      await loadSessions(false);
+      setActionMessage("Session deleted.");
+    } catch (caught) {
+      setActionMessage(caught instanceof Error ? caught.message : "Failed to delete session");
+    }
+  }
+
   function updateRangeTime(boundary: "start" | "end", part: "hours" | "minutes" | "seconds", rawValue: string) {
     if (!selectedRange) {
       return;
@@ -609,9 +639,14 @@ function App() {
                 {activeSession?.session_id === session.session_id ? (
                   <span className="active-session-pill">Active</span>
                 ) : (
-                  <button className="secondary-button" onClick={() => void activateSession(session)} type="button">
-                    Set active
-                  </button>
+                  <div className="session-actions">
+                    <button className="secondary-button" onClick={() => void activateSession(session)} type="button">
+                      Set active
+                    </button>
+                    <button className="danger-button" onClick={() => void removeSession(session)} type="button">
+                      Delete
+                    </button>
+                  </div>
                 )}
               </div>
             ))}
