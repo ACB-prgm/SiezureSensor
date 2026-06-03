@@ -379,9 +379,6 @@ String buildBatchJson(const PreparedBatch &batch) {
   doc["reset_info"] = reset_info;
   doc["uptime_ms"] = millis();
   doc["wifi_rssi"] = isWiFiConnected() ? WiFi.RSSI() : 0;
-  doc["free_heap"] = ESP.getFreeHeap();
-  doc["min_free_heap"] = min_free_heap;
-  doc["heap_fragmentation"] = ESP.getHeapFragmentation();
   doc["queued_batch_count"] = queue_count;
   doc["dropped_batch_count"] = dropped_batch_count;
   doc["max_sample_lateness_ms"] = max_sample_lateness_ms;
@@ -406,6 +403,12 @@ String buildBatchJson(const PreparedBatch &batch) {
       yield();
     }
   }
+
+  trackHeap();
+  doc["free_heap"] = ESP.getFreeHeap();
+  trackHeap();
+  doc["min_free_heap"] = min_free_heap;
+  doc["heap_fragmentation"] = ESP.getHeapFragmentation();
 
   String payload;
   serializeJson(doc, payload);
