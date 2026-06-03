@@ -9,6 +9,7 @@ import {
   getActiveSession,
   getApiControlStatus,
   getApiRuntimeStatus,
+  listDeviceBoots,
   listEvents,
   listSessionSamples,
   listSessions,
@@ -23,6 +24,7 @@ import {
   type ActiveSessionSummary,
   type ApiControlStatus,
   type ApiRuntimeStatus,
+  type BootSummary,
   type EventLabel,
   type EventPayload,
   type EventType,
@@ -83,6 +85,27 @@ function formatClock(value: Date): string {
     minute: "2-digit",
     second: "2-digit",
   });
+}
+
+function formatOptionalNumber(value: number | null | undefined, suffix = ""): string {
+  if (value === null || value === undefined) {
+    return "n/a";
+  }
+  return `${value.toLocaleString()}${suffix}`;
+}
+
+function formatBootSuffix(value: string | null | undefined): string {
+  if (!value) {
+    return "n/a";
+  }
+  return value.length > 12 ? value.slice(-12) : value;
+}
+
+function isConcerningReset(reason: string | null | undefined): boolean {
+  if (!reason) {
+    return false;
+  }
+  return /watchdog|exception|wdt|crash/i.test(reason);
 }
 
 function formatAge(value: string | null): string {
@@ -183,6 +206,7 @@ function App() {
   const [apiRuntimeStatus, setApiRuntimeStatus] = useState<ApiRuntimeStatus | null>(null);
   const [apiStatusMessage, setApiStatusMessage] = useState<string | null>(null);
   const [activeSession, setActiveSessionState] = useState<ActiveSessionSummary | null>(null);
+  const [bootSummaries, setBootSummaries] = useState<BootSummary[]>([]);
   const [currentTime, setCurrentTime] = useState(() => new Date());
   const [isApiStatusLoading, setIsApiStatusLoading] = useState(false);
   const [isApiActionRunning, setIsApiActionRunning] = useState(false);
@@ -233,8 +257,11 @@ function App() {
         listSessionSamples(sessionId, 20000),
         listEvents(sessionId),
       ]);
+      const deviceId = sessions.find((session) => session.session_id === sessionId)?.device_id ?? DEFAULT_SESSION_FORM.deviceId;
+      const nextBootSummaries = await listDeviceBoots(deviceId, sessionId);
       setSamples(nextSamples);
       setLabels(nextLabels);
+      setBootSummaries(nextBootSummaries);
       setTimelineError(null);
     } catch (caught) {
       setTimelineError(caught instanceof Error ? caught.message : "Failed to load timeline");
@@ -309,6 +336,7 @@ function App() {
     if (!sessionId) {
       setSamples([]);
       setLabels([]);
+      setBootSummaries([]);
       return;
     }
 
@@ -322,7 +350,15 @@ function App() {
   const latestSampleReceivedAt = apiRuntimeStatus?.latest_sample_received_at ?? null;
   const isApiReachable = apiControlStatus?.apiReachable ?? apiRuntimeStatus?.status === "ok";
   const isRecording = isActivelyReceiving(latestSampleReceivedAt);
-  const apiStatusClass = isRecording ? "recording" : isApiReachable ? "online" : "offline";
+  const hasDiagnosticWarning = Boolean(
+    apiRuntimeStatus &&
+      (isConcerningReset(apiRuntimeStatus.latest_reset_reason) ||
+        (apiRuntimeStatus.latest_dropped_batch_count ?? 0) > 0 ||
+        (apiRuntimeStatus.latest_consecutive_upload_failures ?? 0) > 0 ||
+        (apiRuntimeStatus.latest_wifi_disconnect_count ?? 0) > 0 ||
+        (apiRuntimeStatus.latest_min_free_heap ?? apiRuntimeStatus.latest_free_heap ?? Number.POSITIVE_INFINITY) < 20000),
+  );
+  const apiStatusClass = `${isRecording ? "recording" : isApiReachable ? "online" : "offline"}${hasDiagnosticWarning ? " warning" : ""}`;
 
   async function refreshLabels(sessionId: string) {
     setLabels(await listEvents(sessionId));
@@ -598,7 +634,18 @@ function App() {
             </div>
             <div>
               <dt>Boot</dt>
-              <dd>{apiRuntimeStatus?.latest_boot_id ? apiRuntimeStatus.latest_boot_id.slice(-10) : "n/a"}</dd>
+              <dd>{formatBootSuffix(apiRuntimeStatus?.latest_boot_id)}</dd>
+            </div>
+            <div>
+              <dt>Reset</dt>
+              <dd>{apiRuntimeStatus?.latest_reset_reason ?? "n/a"}</dd>
+            </div>
+            <div>
+              <dt>HTTP</dt>
+              <dd>
+                {apiRuntimeStatus?.latest_last_http_status ?? "n/a"} /{" "}
+                {formatOptionalNumber(apiRuntimeStatus?.latest_last_http_duration_ms, "ms")}
+              </dd>
             </div>
             <div>
               <dt>Queue / Drop</dt>
@@ -607,8 +654,17 @@ function App() {
               </dd>
             </div>
             <div>
-              <dt>RSSI</dt>
-              <dd>{apiRuntimeStatus?.latest_wifi_rssi ?? "n/a"}</dd>
+              <dt>RSSI / Wi-Fi Drops</dt>
+              <dd>
+                {apiRuntimeStatus?.latest_wifi_rssi ?? "n/a"} / {apiRuntimeStatus?.latest_wifi_disconnect_count ?? "n/a"}
+              </dd>
+            </div>
+            <div>
+              <dt>Heap / Frag</dt>
+              <dd>
+                {formatOptionalNumber(apiRuntimeStatus?.latest_min_free_heap ?? apiRuntimeStatus?.latest_free_heap)} /{" "}
+                {formatOptionalNumber(apiRuntimeStatus?.latest_heap_fragmentation, "%")}
+              </dd>
             </div>
             <div>
               <dt>Late / Skip</dt>
@@ -616,7 +672,16 @@ function App() {
                 {apiRuntimeStatus?.latest_max_sample_lateness_ms ?? "n/a"} / {apiRuntimeStatus?.latest_upload_skip_count ?? "n/a"}
               </dd>
             </div>
+            <div>
+              <dt>Upload Failures</dt>
+              <dd>{apiRuntimeStatus?.latest_consecutive_upload_failures ?? "n/a"}</dd>
+            </div>
           </dl>
+          {apiRuntimeStatus?.latest_reset_info ? (
+            <p className="reset-info-line" title={apiRuntimeStatus.latest_reset_info}>
+              {apiRuntimeStatus.latest_reset_info}
+            </p>
+          ) : null}
           <div className="api-control-actions">
             <button disabled={!isApiControlAvailable || isApiActionRunning || isApiReachable} onClick={() => void startApi()} type="button">
               Start API
@@ -741,6 +806,58 @@ function App() {
                   <dd>{formatTimestamp(selectedSession.last_server_received_at)}</dd>
                 </div>
               </dl>
+              <section className="boot-diagnostics-panel">
+                <div className="panel-heading compact">
+                  <h2>Boot Diagnostics</h2>
+                  <span>{bootSummaries.length} boots</span>
+                </div>
+                {bootSummaries.length > 0 ? (
+                  <div className="boot-table-shell">
+                    <table className="boot-table">
+                      <thead>
+                        <tr>
+                          <th>Boot</th>
+                          <th>Reset</th>
+                          <th>Last Seen</th>
+                          <th>Batches</th>
+                          <th>Seq</th>
+                          <th>Drops</th>
+                          <th>HTTP</th>
+                          <th>Heap</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {bootSummaries.map((boot) => (
+                          <tr className={isConcerningReset(boot.reset_reason) ? "diagnostic-row warning" : "diagnostic-row"} key={`${boot.session_id}-${boot.boot_id}`}>
+                            <td title={boot.boot_id}>{formatBootSuffix(boot.boot_id)}</td>
+                            <td title={boot.reset_info ?? boot.reset_reason ?? ""}>{boot.reset_reason ?? "n/a"}</td>
+                            <td>{formatTimestamp(boot.last_received_at)}</td>
+                            <td>
+                              {boot.batch_count.toLocaleString()} / {boot.sample_count.toLocaleString()}
+                            </td>
+                            <td>
+                              {formatOptionalNumber(boot.min_sequence)}-{formatOptionalNumber(boot.max_sequence)}
+                            </td>
+                            <td>
+                              {formatOptionalNumber(boot.max_dropped_batch_count)} drop /{" "}
+                              {formatOptionalNumber(boot.max_consecutive_upload_failures)} fail
+                            </td>
+                            <td>
+                              {boot.latest_http_status ?? "n/a"} / {formatOptionalNumber(boot.latest_http_duration_ms, "ms")}
+                            </td>
+                            <td>
+                              {formatOptionalNumber(boot.min_reported_free_heap ?? boot.min_free_heap)} /{" "}
+                              {formatOptionalNumber(boot.max_heap_fragmentation, "%")}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="empty-diagnostics">No boot diagnostics for this session yet.</p>
+                )}
+              </section>
               {timelineError ? <p className="error-message">{timelineError}</p> : null}
               <div className="timeline-live-clock" aria-label="Current local time">
                 <span>Current time</span>

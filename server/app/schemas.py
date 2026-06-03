@@ -35,12 +35,20 @@ class IMUBatchIn(BaseModel):
   device_ms_start: int = Field(ge=0)
   battery_mv: int | None = None
   reset_reason: str | None = None
+  reset_info: str | None = None
+  uptime_ms: int | None = Field(default=None, ge=0)
   wifi_rssi: int | None = None
   free_heap: int | None = Field(default=None, ge=0)
+  min_free_heap: int | None = Field(default=None, ge=0)
+  heap_fragmentation: int | None = Field(default=None, ge=0, le=100)
   queued_batch_count: int | None = Field(default=None, ge=0)
   dropped_batch_count: int | None = Field(default=None, ge=0)
   max_sample_lateness_ms: int | None = Field(default=None, ge=0)
   upload_skip_count: int | None = Field(default=None, ge=0)
+  last_http_duration_ms: int | None = Field(default=None, ge=0)
+  last_http_status: int | None = None
+  consecutive_upload_failures: int | None = Field(default=None, ge=0)
+  wifi_disconnect_count: int | None = Field(default=None, ge=0)
   samples: list[IMUSampleIn] = Field(min_length=1)
 
 
@@ -119,6 +127,36 @@ class ActiveSessionOut(BaseModel):
   session_id: str
   updated_at: str
   session: SessionSummaryOut
+
+
+class BootSummaryOut(BaseModel):
+  device_id: str
+  session_id: str
+  boot_id: str
+  reset_reason: str | None = None
+  reset_info: str | None = None
+  first_received_at: str | None = None
+  last_received_at: str | None = None
+  min_sequence: int | None = None
+  max_sequence: int | None = None
+  batch_count: int
+  sample_count: int
+  min_device_ms_start: int | None = None
+  max_device_ms_start: int | None = None
+  latest_uptime_ms: int | None = None
+  latest_http_status: int | None = None
+  latest_http_duration_ms: int | None = None
+  max_consecutive_upload_failures: int | None = None
+  max_wifi_disconnect_count: int | None = None
+  max_queued_batch_count: int | None = None
+  max_dropped_batch_count: int | None = None
+  max_sample_lateness_ms: int | None = None
+  max_upload_skip_count: int | None = None
+  min_wifi_rssi: int | None = None
+  max_wifi_rssi: int | None = None
+  min_free_heap: int | None = None
+  min_reported_free_heap: int | None = None
+  max_heap_fragmentation: int | None = None
 
 
 class SessionSampleOut(BaseModel):

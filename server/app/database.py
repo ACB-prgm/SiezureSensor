@@ -102,12 +102,20 @@ def migrate_batches_table(engine: Engine) -> None:
   columns = column_names(engine, "batches")
   optional_columns = {
     "reset_reason": "reset_reason VARCHAR",
+    "reset_info": "reset_info TEXT",
+    "uptime_ms": "uptime_ms INTEGER",
     "wifi_rssi": "wifi_rssi INTEGER",
     "free_heap": "free_heap INTEGER",
+    "min_free_heap": "min_free_heap INTEGER",
+    "heap_fragmentation": "heap_fragmentation INTEGER",
     "queued_batch_count": "queued_batch_count INTEGER",
     "dropped_batch_count": "dropped_batch_count INTEGER",
     "max_sample_lateness_ms": "max_sample_lateness_ms INTEGER",
     "upload_skip_count": "upload_skip_count INTEGER",
+    "last_http_duration_ms": "last_http_duration_ms INTEGER",
+    "last_http_status": "last_http_status INTEGER",
+    "consecutive_upload_failures": "consecutive_upload_failures INTEGER",
+    "wifi_disconnect_count": "wifi_disconnect_count INTEGER",
   }
   needs_rebuild = "boot_id" not in columns
   needs_rebuild = needs_rebuild or not has_unique_index(engine, "batches", ["device_id", "boot_id", "sequence"])
@@ -137,12 +145,20 @@ def migrate_batches_table(engine: Engine) -> None:
           sample_count INTEGER NOT NULL,
           battery_mv INTEGER,
           reset_reason VARCHAR,
+          reset_info TEXT,
+          uptime_ms INTEGER,
           wifi_rssi INTEGER,
           free_heap INTEGER,
+          min_free_heap INTEGER,
+          heap_fragmentation INTEGER,
           queued_batch_count INTEGER,
           dropped_batch_count INTEGER,
           max_sample_lateness_ms INTEGER,
           upload_skip_count INTEGER,
+          last_http_duration_ms INTEGER,
+          last_http_status INTEGER,
+          consecutive_upload_failures INTEGER,
+          wifi_disconnect_count INTEGER,
           raw_payload_json TEXT NOT NULL,
           CONSTRAINT uq_batch_device_boot_sequence UNIQUE (device_id, boot_id, sequence)
         )
@@ -164,12 +180,20 @@ def migrate_batches_table(engine: Engine) -> None:
           sample_count,
           battery_mv,
           reset_reason,
+          reset_info,
+          uptime_ms,
           wifi_rssi,
           free_heap,
+          min_free_heap,
+          heap_fragmentation,
           queued_batch_count,
           dropped_batch_count,
           max_sample_lateness_ms,
           upload_skip_count,
+          last_http_duration_ms,
+          last_http_status,
+          consecutive_upload_failures,
+          wifi_disconnect_count,
           raw_payload_json
         )
         SELECT
@@ -184,12 +208,20 @@ def migrate_batches_table(engine: Engine) -> None:
           sample_count,
           battery_mv,
           {select_expr("reset_reason", "NULL")},
+          {select_expr("reset_info", "NULL")},
+          {select_expr("uptime_ms", "NULL")},
           {select_expr("wifi_rssi", "NULL")},
           {select_expr("free_heap", "NULL")},
+          {select_expr("min_free_heap", "NULL")},
+          {select_expr("heap_fragmentation", "NULL")},
           {select_expr("queued_batch_count", "NULL")},
           {select_expr("dropped_batch_count", "NULL")},
           {select_expr("max_sample_lateness_ms", "NULL")},
           {select_expr("upload_skip_count", "NULL")},
+          {select_expr("last_http_duration_ms", "NULL")},
+          {select_expr("last_http_status", "NULL")},
+          {select_expr("consecutive_upload_failures", "NULL")},
+          {select_expr("wifi_disconnect_count", "NULL")},
           raw_payload_json
         FROM batches
         """

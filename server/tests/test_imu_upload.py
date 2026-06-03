@@ -11,12 +11,20 @@ def valid_payload(sequence: int = 1234, boot_id: str = "boot-test-001") -> dict:
     "device_ms_start": 184240,
     "battery_mv": None,
     "reset_reason": "Power on",
+    "reset_info": "Fatal exception:0 flag:0",
+    "uptime_ms": 184500,
     "wifi_rssi": -55,
     "free_heap": 42000,
+    "min_free_heap": 39800,
+    "heap_fragmentation": 3,
     "queued_batch_count": 0,
     "dropped_batch_count": 0,
     "max_sample_lateness_ms": 7,
     "upload_skip_count": 3,
+    "last_http_duration_ms": 82,
+    "last_http_status": 200,
+    "consecutive_upload_failures": 0,
+    "wifi_disconnect_count": 1,
     "samples": [
       {
         "dt_ms": 0,
@@ -66,10 +74,18 @@ def test_valid_batch_returns_ack_and_persists_rows(client, db_session):
   assert batch.session_id.endswith("-beanie-v0-001-auto")
   assert batch.boot_id == payload["boot_id"]
   assert batch.reset_reason == "Power on"
+  assert batch.reset_info == "Fatal exception:0 flag:0"
+  assert batch.uptime_ms == 184500
   assert batch.wifi_rssi == -55
   assert batch.free_heap == 42000
+  assert batch.min_free_heap == 39800
+  assert batch.heap_fragmentation == 3
   assert batch.max_sample_lateness_ms == 7
   assert batch.upload_skip_count == 3
+  assert batch.last_http_duration_ms == 82
+  assert batch.last_http_status == 200
+  assert batch.consecutive_upload_failures == 0
+  assert batch.wifi_disconnect_count == 1
   assert batch.sample_count == len(payload["samples"])
   assert '"device_id":"beanie-v0-001"' in batch.raw_payload_json
 

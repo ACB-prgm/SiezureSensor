@@ -2,6 +2,7 @@ import type {
   ApiControlStatus,
   ApiRuntimeStatus,
   ActiveSessionSummary,
+  BootSummary,
   EventLabel,
   EventPayload,
   SessionCreatePayload,
@@ -88,6 +89,15 @@ export function setActiveSession(deviceId: string, sessionId: string): Promise<A
     headers: { "Content-Type": "application/json" },
     method: "POST",
   });
+}
+
+export function listDeviceBoots(deviceId: string, sessionId?: string): Promise<BootSummary[]> {
+  const params = new URLSearchParams();
+  if (sessionId) {
+    params.set("session_id", sessionId);
+  }
+  const suffix = params.size > 0 ? `?${params}` : "";
+  return requestJson<BootSummary[]>(`/api/v1/devices/${encodeURIComponent(deviceId)}/boots${suffix}`);
 }
 
 export function listSessionSamples(

@@ -6,6 +6,42 @@ Sprint 6.1 is a blocking diagnostics sprint before continuing long-run validatio
 
 Every boot and batch should carry enough diagnostic context to answer why a run failed. Live tests should also save decoded serial logs so ESP8266 exception stack traces are not lost when the board reboots.
 
+## Implemented Workflow
+
+Start the app services:
+
+```bash
+./scripts/start_services.sh
+```
+
+Start decoded ESP serial logging in a second terminal:
+
+```bash
+./scripts/monitor_esp.sh
+```
+
+Useful overrides:
+
+```bash
+PORT=/dev/cu.usbserial-83420 ./scripts/monitor_esp.sh
+BAUD=115200 ./scripts/monitor_esp.sh
+PIO=/path/to/pio ./scripts/monitor_esp.sh
+```
+
+Monitor logs are written under `data/logs/esp/`, which is ignored by git.
+
+Inspect latest runtime diagnostics:
+
+```bash
+curl http://127.0.0.1:8000/api/v1/status
+```
+
+Inspect boot-level diagnostics for a selected session:
+
+```bash
+curl "http://127.0.0.1:8000/api/v1/devices/beanie-v0-001/boots?session_id=Hard%20Wired"
+```
+
 ## Commit Plan
 
 ### Commit 1: Firmware Crash And Reset Telemetry
@@ -23,6 +59,13 @@ Implement firmware fields in each batch payload:
 
 Also track Wi-Fi disconnect transitions, min heap over the boot lifetime, upload duration/status, and upload failure streak.
 
+Implemented hardening defaults:
+
+- HTTP upload timeout reduced to `350ms`.
+- `yield()` safe points added around Wi-Fi reconnects, JSON serialization, HTTP uploads, I2C scan, retry loops, and the main loop.
+- RAM queue behavior remains bounded and still drops oldest unsent batches when full.
+- Brownout/power-loss persistence is still out of scope.
+
 Verification:
 
 - PlatformIO build succeeds.
@@ -38,6 +81,7 @@ Implement:
 - Add SQLite migration logic for existing databases.
 - Persist all new fields.
 - Return latest diagnostic values from `/api/v1/status`.
+- Add `GET /api/v1/devices/{device_id}/boots?session_id=...` for boot summaries.
 
 Verification:
 
@@ -57,6 +101,7 @@ Show these values in the dashboard status card:
 - last HTTP status and upload duration
 - upload failure streak
 - queue depth, dropped batches, upload skips, and max sample lateness
+- selected-session boot diagnostics table with reset reason, last seen time, sequence range, batch/sample counts, drops, HTTP timing, and heap state
 
 Highlight risky states:
 
@@ -89,6 +134,8 @@ Use PlatformIO monitor filters:
 - `log2file`
 - `time`
 
+The script also mirrors output to a timestamped log with `tee` so the log path is deterministic.
+
 Verification:
 
 - Script starts the monitor.
@@ -115,6 +162,33 @@ Required failure report fields:
 - API status snapshot
 - DB boot summary
 
+## Reset Reason Notes
+
+- `External System`: usually a reset button, USB serial reset, flashing, or external reset line event.
+- `Hardware Watchdog`: firmware blocked too long without yielding, commonly from network, I2C, JSON serialization, or other long synchronous work.
+- `Exception`: firmware crash. Use the decoded serial log and `reset_info` to identify the stack trace and exception cause.
+
+## New Batch Diagnostic Fields
+
+- `reset_info`
+- `uptime_ms`
+- `last_http_duration_ms`
+- `last_http_status`
+- `consecutive_upload_failures`
+- `wifi_disconnect_count`
+- `min_free_heap`
+- `heap_fragmentation`
+
+Existing queue/sampling diagnostics remain:
+
+- `reset_reason`
+- `wifi_rssi`
+- `free_heap`
+- `queued_batch_count`
+- `dropped_batch_count`
+- `max_sample_lateness_ms`
+- `upload_skip_count`
+
 ## Test Plan
 
 - Backend accepts optional diagnostic fields and persists them.
@@ -139,4 +213,4 @@ Sprint 6.1 is done when a reset can be diagnosed with:
 
 ## Next Step
 
-Implement firmware telemetry and API persistence first. Those are the minimum required before another meaningful long-run validation run.
+Flash the updated firmware when the device is available, start `./scripts/monitor_esp.sh`, and run another live test with the dashboard open. If the ESP resets, collect the active session id, boot id, reset timestamp, API status snapshot, boot summary output, and the serial log path.

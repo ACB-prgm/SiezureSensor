@@ -16,7 +16,7 @@ constexpr uint16_t SAMPLES_PER_BATCH = 50;
 constexpr uint8_t QUEUED_BATCH_CAPACITY = 12; // ESP8266 RAM-safe backlog.
 constexpr bool ENABLE_STARTUP_I2C_SCAN = true;
 constexpr uint32_t WIFI_RETRY_INTERVAL_MS = 10000;
-constexpr uint32_t HTTP_TIMEOUT_MS = 900;
+constexpr uint32_t HTTP_TIMEOUT_MS = 350;
 constexpr uint32_t UPLOAD_RETRY_INTERVAL_MS = 250;
 constexpr uint32_t UPLOAD_SAMPLE_GUARD_MS = 8;
 constexpr int HTTP_STATUS_CONFLICT = 409;
@@ -65,10 +65,24 @@ uint32_t batch_sequence = 0;
 uint32_t dropped_batch_count = 0;
 uint32_t max_sample_lateness_ms = 0;
 uint32_t upload_skip_count = 0;
+uint32_t min_free_heap = 0;
+uint32_t last_http_duration_ms = 0;
+int last_http_status = 0;
+uint32_t consecutive_upload_failures = 0;
+uint32_t wifi_disconnect_count = 0;
 String boot_id;
 String reset_reason;
+String reset_info;
 bool imu_ready = false;
 bool wifi_begin_called = false;
+bool wifi_was_connected = false;
+
+void trackHeap() {
+  const uint32_t free_heap = ESP.getFreeHeap();
+  if (min_free_heap == 0 || free_heap < min_free_heap) {
+    min_free_heap = free_heap;
+  }
+}
 
 void printAddress(uint8_t address) {
   Serial.print("0x");
@@ -103,21 +117,32 @@ void startWiFiConnect() {
   Serial.println(WIFI_SSID);
 
   WiFi.mode(WIFI_STA);
+  yield();
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  yield();
   wifi_begin_called = true;
 }
 
 void maintainWiFi(uint32_t now_ms) {
-  if (isWiFiConnected()) {
-    static bool printed_connected = false;
-    if (!printed_connected) {
+  const bool connected = isWiFiConnected();
+
+  if (connected) {
+    if (!wifi_was_connected) {
       Serial.print("Wi-Fi connected. Local IP: ");
       Serial.print(WiFi.localIP());
       Serial.print(", RSSI: ");
       Serial.println(WiFi.RSSI());
-      printed_connected = true;
     }
+    wifi_was_connected = true;
     return;
+  }
+
+  if (wifi_was_connected) {
+    wifi_disconnect_count++;
+    wifi_was_connected = false;
+    Serial.print("Wi-Fi disconnected. disconnect_count=");
+    Serial.println(wifi_disconnect_count);
+    printWiFiStatus();
   }
 
   if (static_cast<int32_t>(now_ms - next_wifi_retry_ms) >= 0) {
@@ -125,6 +150,7 @@ void maintainWiFi(uint32_t now_ms) {
       Serial.println("Wi-Fi not connected; retrying without blocking sampling.");
       printWiFiStatus();
       WiFi.disconnect();
+      yield();
     }
     startWiFiConnect();
     next_wifi_retry_ms = now_ms + WIFI_RETRY_INTERVAL_MS;
@@ -154,6 +180,7 @@ void scanI2CBus() {
       printAddress(address);
       Serial.println();
     }
+    yield();
   }
 
   if (found_count == 0) {
@@ -339,6 +366,7 @@ String uploadUrl() {
 }
 
 String buildBatchJson(const PreparedBatch &batch) {
+  trackHeap();
   JsonDocument doc;
   doc["device_id"] = DEVICE_ID;
   doc["boot_id"] = boot_id;
@@ -348,12 +376,20 @@ String buildBatchJson(const PreparedBatch &batch) {
   doc["device_ms_start"] = batch.device_ms_start;
   doc["battery_mv"] = nullptr;
   doc["reset_reason"] = reset_reason;
+  doc["reset_info"] = reset_info;
+  doc["uptime_ms"] = millis();
   doc["wifi_rssi"] = isWiFiConnected() ? WiFi.RSSI() : 0;
   doc["free_heap"] = ESP.getFreeHeap();
+  doc["min_free_heap"] = min_free_heap;
+  doc["heap_fragmentation"] = ESP.getHeapFragmentation();
   doc["queued_batch_count"] = queue_count;
   doc["dropped_batch_count"] = dropped_batch_count;
   doc["max_sample_lateness_ms"] = max_sample_lateness_ms;
   doc["upload_skip_count"] = upload_skip_count;
+  doc["last_http_duration_ms"] = last_http_duration_ms;
+  doc["last_http_status"] = last_http_status;
+  doc["consecutive_upload_failures"] = consecutive_upload_failures;
+  doc["wifi_disconnect_count"] = wifi_disconnect_count;
 
   JsonArray samples = doc["samples"].to<JsonArray>();
   for (uint16_t i = 0; i < batch.sample_count; i++) {
@@ -366,10 +402,14 @@ String buildBatchJson(const PreparedBatch &batch) {
     sample["gx"] = gyroRawToDps(batch_sample.reading.gx);
     sample["gy"] = gyroRawToDps(batch_sample.reading.gy);
     sample["gz"] = gyroRawToDps(batch_sample.reading.gz);
+    if ((i % 10) == 0) {
+      yield();
+    }
   }
 
   String payload;
   serializeJson(doc, payload);
+  yield();
   return payload;
 }
 
@@ -383,6 +423,7 @@ bool uploadBatch(const PreparedBatch &batch) {
   const String payload = buildBatchJson(batch);
   WiFiClient client;
   HTTPClient http;
+  const uint32_t upload_start_ms = millis();
 
   Serial.print("Uploading batch sequence=");
   Serial.print(batch.sequence);
@@ -396,15 +437,25 @@ bool uploadBatch(const PreparedBatch &batch) {
   Serial.println(url);
 
   http.setTimeout(HTTP_TIMEOUT_MS);
+  yield();
   if (!http.begin(client, url)) {
+    last_http_duration_ms = millis() - upload_start_ms;
+    last_http_status = -1000;
+    consecutive_upload_failures++;
     Serial.println("HTTP begin failed; keeping batch queued.");
     return false;
   }
 
   http.addHeader("Content-Type", "application/json");
+  yield();
   const int status_code = http.POST(payload);
+  last_http_duration_ms = millis() - upload_start_ms;
+  last_http_status = status_code;
+  yield();
   Serial.print("Upload HTTP status: ");
-  Serial.println(status_code);
+  Serial.print(status_code);
+  Serial.print(", duration_ms=");
+  Serial.println(last_http_duration_ms);
 
   const bool already_stored = status_code == HTTP_STATUS_CONFLICT;
   bool ok = (status_code >= 200 && status_code < 300) || already_stored;
@@ -420,6 +471,14 @@ bool uploadBatch(const PreparedBatch &batch) {
   }
 
   http.end();
+  yield();
+  if (ok) {
+    consecutive_upload_failures = 0;
+  } else {
+    consecutive_upload_failures++;
+    Serial.print("Consecutive upload failures: ");
+    Serial.println(consecutive_upload_failures);
+  }
   return ok;
 }
 
@@ -446,6 +505,8 @@ void uploadOneQueuedBatch(uint32_t now_ms) {
 
 void initializeBootIdentity() {
   reset_reason = ESP.getResetReason();
+  reset_info = ESP.getResetInfo();
+  min_free_heap = ESP.getFreeHeap();
   randomSeed(ESP.getCycleCount() ^ micros() ^ ESP.getChipId());
   char buffer[40] = {0};
   snprintf(
@@ -474,6 +535,8 @@ void setup() {
   Serial.println(boot_id);
   Serial.print("Reset reason: ");
   Serial.println(reset_reason);
+  Serial.print("Reset info: ");
+  Serial.println(reset_info);
   Serial.print("Server URL: ");
   Serial.println(SERVER_URL);
   Serial.print("Queue capacity: ");
@@ -503,6 +566,7 @@ void setup() {
 
 void loop() {
   const uint32_t now_ms = millis();
+  trackHeap();
   maintainWiFi(now_ms);
 
   if (!imu_ready) {
@@ -516,6 +580,7 @@ void loop() {
       }
       next_retry_ms = now_ms + 1000;
     }
+    yield();
     return;
   }
 
@@ -543,4 +608,5 @@ void loop() {
   }
 
   uploadOneQueuedBatch(millis());
+  yield();
 }
