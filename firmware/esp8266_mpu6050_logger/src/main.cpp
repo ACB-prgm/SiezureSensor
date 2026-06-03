@@ -19,6 +19,7 @@ constexpr uint32_t WIFI_RETRY_INTERVAL_MS = 10000;
 constexpr uint32_t HTTP_TIMEOUT_MS = 900;
 constexpr uint32_t UPLOAD_RETRY_INTERVAL_MS = 250;
 constexpr uint32_t UPLOAD_SAMPLE_GUARD_MS = 8;
+constexpr int HTTP_STATUS_CONFLICT = 409;
 
 constexpr uint8_t MPU6050_ADDRESS = 0x68;
 constexpr uint8_t MPU6050_REG_SMPLRT_DIV = 0x19;
@@ -405,10 +406,14 @@ bool uploadBatch(const PreparedBatch &batch) {
   Serial.print("Upload HTTP status: ");
   Serial.println(status_code);
 
-  bool ok = status_code >= 200 && status_code < 300;
+  const bool already_stored = status_code == HTTP_STATUS_CONFLICT;
+  bool ok = (status_code >= 200 && status_code < 300) || already_stored;
   if (status_code > 0) {
     Serial.print("Upload response: ");
     Serial.println(http.getString());
+    if (already_stored) {
+      Serial.println("Upload duplicate already stored; removing queued batch.");
+    }
   } else {
     Serial.print("Upload failed: ");
     Serial.println(http.errorToString(status_code));
