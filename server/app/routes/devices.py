@@ -113,4 +113,23 @@ def list_device_boots(
     .all()
   )
 
-  return [BootSummaryOut(**row._asdict()) for row in rows]
+  summaries: list[BootSummaryOut] = []
+  for row in rows:
+    data = row._asdict()
+    latest_batch = (
+      db.query(Batch)
+      .filter(
+        Batch.device_id == data["device_id"],
+        Batch.session_id == data["session_id"],
+        Batch.boot_id == data["boot_id"],
+      )
+      .order_by(Batch.server_received_at.desc(), Batch.id.desc())
+      .first()
+    )
+    if latest_batch is not None:
+      data["latest_uptime_ms"] = latest_batch.uptime_ms
+      data["latest_http_status"] = latest_batch.last_http_status
+      data["latest_http_duration_ms"] = latest_batch.last_http_duration_ms
+    summaries.append(BootSummaryOut(**data))
+
+  return summaries

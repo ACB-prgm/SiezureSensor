@@ -44,10 +44,14 @@ def test_list_device_boots_returns_session_boot_diagnostics(client):
   assert client.post("/api/v1/sessions", json={"session_id": "session-a", "device_id": "beanie-v0-001"}).status_code == 201
   first = valid_payload(sequence=1, boot_id="boot-a")
   first["device_ms_start"] = 1000
+  first["last_http_status"] = 409
+  first["last_http_duration_ms"] = 300
   second = valid_payload(sequence=2, boot_id="boot-a")
   second["device_ms_start"] = 2000
   second["dropped_batch_count"] = 2
   second["consecutive_upload_failures"] = 4
+  second["last_http_status"] = 200
+  second["last_http_duration_ms"] = 80
   other_boot = valid_payload(sequence=1, boot_id="boot-b")
   other_boot["device_ms_start"] = 3000
   other_boot["reset_reason"] = "Hardware Watchdog"
@@ -68,5 +72,7 @@ def test_list_device_boots_returns_session_boot_diagnostics(client):
   assert boot_a["max_sequence"] == 2
   assert boot_a["max_dropped_batch_count"] == 2
   assert boot_a["max_consecutive_upload_failures"] == 4
+  assert boot_a["latest_http_status"] == 200
+  assert boot_a["latest_http_duration_ms"] == 80
   assert boot_a["min_free_heap"] == first["free_heap"]
   assert boot_a["min_reported_free_heap"] == first["min_free_heap"]
