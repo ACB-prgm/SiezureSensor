@@ -114,6 +114,8 @@ Rationale:
 
 ## Sprint 6: Long-Run Validation
 
+Status: blocked by Sprint 6.1 failure diagnostics.
+
 Milestones:
 
 - `M8.4` Long-run firmware test
@@ -132,6 +134,37 @@ Outcome:
 Rationale:
 
 - Treat long-run hardware validation as its own sprint because it depends on physical setup, uninterrupted runtime, and manual review.
+- The June 2 live test exposed ESP watchdog/exception resets, so long-run validation should pause until failures are diagnosable.
+
+## Sprint 6.1: ESP Failure Diagnostics
+
+Status: planned.
+
+Milestones:
+
+- Diagnostic hardening for `M8.4` Long-run firmware test
+- Diagnostic hardening for `M11` Data Quality Validation
+
+Outcome:
+
+- Firmware reports full reset/crash context, not only reset reason.
+- API persists per-batch reset, heap, Wi-Fi, upload, queue, and timing diagnostics.
+- Dashboard highlights reset, watchdog, exception, low-heap, upload-failure, and dropped-batch states.
+- A decoded serial monitor script saves ESP8266 crash logs under `data/logs/esp/`.
+- A documented failure report includes active session id, boot id, reset timestamp, serial log, API status snapshot, and DB boot summary.
+
+Deliverables:
+
+- Firmware telemetry fields: `reset_info`, `uptime_ms`, `last_http_duration_ms`, `last_http_status`, `consecutive_upload_failures`, `wifi_disconnect_count`, `min_free_heap`, and `heap_fragmentation` if supported.
+- API schema, persistence, migrations, and `/api/v1/status` output for the diagnostic fields.
+- Dashboard diagnostic status panel and warning styling.
+- `scripts/monitor_esp.sh` with `esp8266_exception_decoder`, `log2file`, and timestamped logs.
+- Detailed plan and workflow in [Sprint 6.1 Failure Diagnostics](sprint_6_1_failure_diagnostics.md).
+
+Rationale:
+
+- The current system can detect that an ESP reset happened, but cannot yet explain the exact firmware exception or watchdog path.
+- Long-run testing should produce actionable failure evidence instead of speculation.
 
 ## Sprint 7: Documentation and V0 Closeout
 
