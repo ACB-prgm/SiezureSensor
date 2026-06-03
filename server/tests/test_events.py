@@ -17,6 +17,8 @@ def valid_event_payload(session_id: str = "session-with-data") -> dict:
     "severity": 2,
     "start_device_ms": 184240,
     "end_device_ms": 184300,
+    "start_server_received_at": "2026-06-03T02:10:00+00:00",
+    "end_server_received_at": "2026-06-03T02:10:05+00:00",
     "source": "manual",
     "notes": "short scratch",
   }
@@ -35,6 +37,8 @@ def test_valid_event_creation_succeeds(client, db_session):
   assert body["severity"] == 2
   assert body["start_device_ms"] == 184240
   assert body["end_device_ms"] == 184300
+  assert body["start_server_received_at"] == "2026-06-03T02:10:00+00:00"
+  assert body["end_server_received_at"] == "2026-06-03T02:10:05+00:00"
   assert body["source"] == "manual"
   assert body["notes"] == "short scratch"
   assert body["created_at"]
@@ -74,10 +78,24 @@ def test_overlapping_event_creation_returns_409(client):
   overlapping = valid_event_payload()
   overlapping["start_device_ms"] = 184250
   overlapping["end_device_ms"] = 184350
+  overlapping["start_server_received_at"] = None
+  overlapping["end_server_received_at"] = None
 
   response = client.post("/api/v1/events", json=overlapping)
 
   assert response.status_code == 409
+
+
+def test_reused_device_ms_on_different_server_time_does_not_overlap(client):
+  create_session(client)
+  assert client.post("/api/v1/events", json=valid_event_payload()).status_code == 201
+  later_boot_label = valid_event_payload()
+  later_boot_label["start_server_received_at"] = "2026-06-03T02:20:00+00:00"
+  later_boot_label["end_server_received_at"] = "2026-06-03T02:20:05+00:00"
+
+  response = client.post("/api/v1/events", json=later_boot_label)
+
+  assert response.status_code == 201
 
 
 def test_event_listing_returns_created_events(client):
@@ -87,6 +105,8 @@ def test_event_listing_returns_created_events(client):
   second["event_type"] = "walking"
   second["start_device_ms"] = 184320
   second["end_device_ms"] = 184500
+  second["start_server_received_at"] = "2026-06-03T02:10:10+00:00"
+  second["end_server_received_at"] = "2026-06-03T02:10:15+00:00"
 
   assert client.post("/api/v1/events", json=second).status_code == 201
   assert client.post("/api/v1/events", json=first).status_code == 201
@@ -173,6 +193,8 @@ def test_patch_event_rejects_overlap(client):
   second = valid_event_payload()
   second["start_device_ms"] = 184400
   second["end_device_ms"] = 184500
+  second["start_server_received_at"] = "2026-06-03T02:10:10+00:00"
+  second["end_server_received_at"] = "2026-06-03T02:10:15+00:00"
   second_id = client.post("/api/v1/events", json=second).json()["id"]
 
   response = client.patch(

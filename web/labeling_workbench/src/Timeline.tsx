@@ -152,6 +152,31 @@ function nearestSampleByTime(samples: SessionSample[], timeMs: number): SessionS
   return nearest;
 }
 
+function selectionTimeRange(range: SelectionRange, samples: SessionSample[]): [number, number] | null {
+  if (range.startServerReceivedAt && range.endServerReceivedAt) {
+    const startTime = new Date(range.startServerReceivedAt).getTime();
+    const endTime = new Date(range.endServerReceivedAt).getTime();
+    if (Number.isFinite(startTime) && Number.isFinite(endTime)) {
+      return [Math.min(startTime, endTime), Math.max(startTime, endTime)];
+    }
+  }
+  return timeRangeForDeviceRange(samples, range);
+}
+
+function labelTimeRange(label: EventLabel, samples: SessionSample[]): [number, number] | null {
+  if (label.start_server_received_at && label.end_server_received_at) {
+    const startTime = new Date(label.start_server_received_at).getTime();
+    const endTime = new Date(label.end_server_received_at).getTime();
+    if (Number.isFinite(startTime) && Number.isFinite(endTime)) {
+      return [Math.min(startTime, endTime), Math.max(startTime, endTime)];
+    }
+  }
+  return timeRangeForDeviceRange(samples, {
+    startDeviceMs: label.start_device_ms,
+    endDeviceMs: label.end_device_ms,
+  });
+}
+
 function nearestTimeForDeviceMs(samples: SessionSample[], deviceMs: number): number | null {
   if (samples.length === 0) {
     return null;
@@ -248,7 +273,7 @@ function Timeline({
       return;
     }
     if (domain && focusRange) {
-      const timeRange = timeRangeForDeviceRange(timelineSamples, focusRange);
+      const timeRange = selectionTimeRange(focusRange, timelineSamples);
       if (timeRange) {
         lastAppliedFocusKeyRef.current = focusKey;
         setIsFollowingLatest(false);
@@ -376,7 +401,7 @@ function Timeline({
     const pointerSample = nearestSampleByTime(timelineSamples, pointerTimeMs);
     const pointerDeviceMs = pointerSample?.device_ms ?? 0;
     const handleToleranceMs = viewSpan * 0.012;
-    const selectedTimeRange = selectedRange ? timeRangeForDeviceRange(timelineSamples, selectedRange) : null;
+    const selectedTimeRange = selectedRange ? selectionTimeRange(selectedRange, timelineSamples) : null;
 
     if (selectedTimeRange && Math.abs(pointerTimeMs - selectedTimeRange[0]) <= handleToleranceMs) {
       setIsFollowingLatest(false);
@@ -391,7 +416,12 @@ function Timeline({
     if (isSelectionMode) {
       setIsFollowingLatest(false);
       setSelectionDrag({ timeMs: pointerTimeMs, deviceMs: pointerDeviceMs });
-      setSelectionDraft({ startDeviceMs: pointerDeviceMs, endDeviceMs: pointerDeviceMs });
+      setSelectionDraft({
+        startDeviceMs: pointerDeviceMs,
+        endDeviceMs: pointerDeviceMs,
+        startServerReceivedAt: pointerSample?.server_received_at ?? null,
+        endServerReceivedAt: pointerSample?.server_received_at ?? null,
+      });
       setSelectionTimeDraft([pointerTimeMs, pointerTimeMs]);
       return;
     }
@@ -404,11 +434,20 @@ function Timeline({
     const currentSample = nearestSampleByTime(timelineSamples, currentTimeMs);
     const currentDeviceMs = currentSample?.device_ms ?? 0;
     if (handleDrag && selectedRange) {
+      const currentServerReceivedAt = currentSample?.server_received_at ?? null;
       const nextRange =
         handleDrag === "start"
-          ? { startDeviceMs: Math.min(currentDeviceMs, selectedRange.endDeviceMs - 1), endDeviceMs: selectedRange.endDeviceMs }
-          : { startDeviceMs: selectedRange.startDeviceMs, endDeviceMs: Math.max(currentDeviceMs, selectedRange.startDeviceMs + 1) };
-      const currentTimeRange = timeRangeForDeviceRange(timelineSamples, selectedRange);
+          ? {
+              ...selectedRange,
+              startDeviceMs: Math.min(currentDeviceMs, selectedRange.endDeviceMs - 1),
+              startServerReceivedAt: currentServerReceivedAt,
+            }
+          : {
+              ...selectedRange,
+              endDeviceMs: Math.max(currentDeviceMs, selectedRange.startDeviceMs + 1),
+              endServerReceivedAt: currentServerReceivedAt,
+            };
+      const currentTimeRange = selectionTimeRange(selectedRange, timelineSamples);
       if (currentTimeRange) {
         setSelectionTimeDraft(
           handleDrag === "start"
@@ -422,9 +461,13 @@ function Timeline({
     if (selectionDrag !== null) {
       const startDeviceMs = selectionDrag.deviceMs;
       const endDeviceMs = currentDeviceMs;
+      const dragStartServerReceivedAt = nearestSampleByTime(timelineSamples, selectionDrag.timeMs)?.server_received_at ?? null;
+      const currentServerReceivedAt = currentSample?.server_received_at ?? null;
       setSelectionDraft({
         startDeviceMs: Math.min(startDeviceMs, endDeviceMs),
         endDeviceMs: Math.max(startDeviceMs, endDeviceMs),
+        startServerReceivedAt: selectionDrag.timeMs <= currentTimeMs ? dragStartServerReceivedAt : currentServerReceivedAt,
+        endServerReceivedAt: selectionDrag.timeMs <= currentTimeMs ? currentServerReceivedAt : dragStartServerReceivedAt,
       });
       setSelectionTimeDraft([Math.min(selectionDrag.timeMs, currentTimeMs), Math.max(selectionDrag.timeMs, currentTimeMs)]);
       return;
@@ -455,7 +498,7 @@ function Timeline({
 
   const ticks = Array.from({ length: 6 }, (_, index) => viewStart + (viewSpan * index) / 5);
   const visibleSelection = selectionDraft ?? selectedRange;
-  const visibleSelectionTimeRange = selectionTimeDraft ?? (visibleSelection ? timeRangeForDeviceRange(timelineSamples, visibleSelection) : null);
+  const visibleSelectionTimeRange = selectionTimeDraft ?? (visibleSelection ? selectionTimeRange(visibleSelection, timelineSamples) : null);
 
   return (
     <div className="timeline-card">
@@ -529,15 +572,12 @@ function Timeline({
       >
         <rect className="timeline-background" height={HEIGHT} width={WIDTH} x={0} y={0} />
         {labels.map((label) => {
-          const labelTimeRange = timeRangeForDeviceRange(timelineSamples, {
-            startDeviceMs: label.start_device_ms,
-            endDeviceMs: label.end_device_ms,
-          });
-          if (!labelTimeRange || labelTimeRange[1] < viewStart || labelTimeRange[0] > viewEnd) {
+          const currentLabelTimeRange = labelTimeRange(label, timelineSamples);
+          if (!currentLabelTimeRange || currentLabelTimeRange[1] < viewStart || currentLabelTimeRange[0] > viewEnd) {
             return null;
           }
-          const x = Math.max(LEFT_PAD, xScale(labelTimeRange[0]));
-          const width = Math.max(2, Math.min(WIDTH - RIGHT_PAD, xScale(labelTimeRange[1])) - x);
+          const x = Math.max(LEFT_PAD, xScale(currentLabelTimeRange[0]));
+          const width = Math.max(2, Math.min(WIDTH - RIGHT_PAD, xScale(currentLabelTimeRange[1])) - x);
           return (
             <g key={label.id}>
               <rect

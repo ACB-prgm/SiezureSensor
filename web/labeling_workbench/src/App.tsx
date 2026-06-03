@@ -128,7 +128,7 @@ function dateForDeviceMs(samples: SessionSample[], deviceMs: number): Date | nul
   return new Date(nearest.server_received_at);
 }
 
-function deviceMsForDate(samples: SessionSample[], targetDate: Date): number | null {
+function sampleForDate(samples: SessionSample[], targetDate: Date): SessionSample | null {
   if (samples.length === 0) {
     return null;
   }
@@ -141,7 +141,11 @@ function deviceMsForDate(samples: SessionSample[], targetDate: Date): number | n
       nearestDistance = distance;
     }
   }
-  return nearest.device_ms;
+  return nearest;
+}
+
+function deviceMsForDate(samples: SessionSample[], targetDate: Date): number | null {
+  return sampleForDate(samples, targetDate)?.device_ms ?? null;
 }
 
 function rangeAroundLabel(label: EventLabel): ViewRange {
@@ -151,6 +155,8 @@ function rangeAroundLabel(label: EventLabel): ViewRange {
   return {
     startDeviceMs: Math.max(0, Math.round(midpoint - viewSpan / 2)),
     endDeviceMs: Math.round(midpoint + viewSpan / 2),
+    startServerReceivedAt: label.start_server_received_at,
+    endServerReceivedAt: label.end_server_received_at,
   };
 }
 
@@ -332,7 +338,12 @@ function App() {
 
   function editLabel(label: EventLabel) {
     setEditingLabel(label);
-    setSelectedRange({ startDeviceMs: label.start_device_ms, endDeviceMs: label.end_device_ms });
+    setSelectedRange({
+      startDeviceMs: label.start_device_ms,
+      endDeviceMs: label.end_device_ms,
+      startServerReceivedAt: label.start_server_received_at,
+      endServerReceivedAt: label.end_server_received_at,
+    });
     setFocusRange(rangeAroundLabel(label));
     setForm({
       eventType: label.event_type,
@@ -343,9 +354,13 @@ function App() {
   }
 
   function hasOverlap(range: SelectionRange, excludeEventId: number | null): boolean {
+    const rangeHasServerTime = range.startServerReceivedAt !== undefined && range.startServerReceivedAt !== null && range.endServerReceivedAt !== undefined && range.endServerReceivedAt !== null;
     return labels.some((label) => {
       if (excludeEventId !== null && label.id === excludeEventId) {
         return false;
+      }
+      if (rangeHasServerTime && label.start_server_received_at && label.end_server_received_at) {
+        return label.start_server_received_at < range.endServerReceivedAt! && label.end_server_received_at > range.startServerReceivedAt!;
       }
       return label.start_device_ms < range.endDeviceMs && label.end_device_ms > range.startDeviceMs;
     });
@@ -367,6 +382,8 @@ function App() {
       severity: form.severity === "" ? null : Number(form.severity),
       start_device_ms: selectedRange.startDeviceMs,
       end_device_ms: selectedRange.endDeviceMs,
+      start_server_received_at: selectedRange.startServerReceivedAt ?? null,
+      end_server_received_at: selectedRange.endServerReceivedAt ?? null,
       source: "manual",
       notes: form.notes.trim() === "" ? null : form.notes.trim(),
     };
@@ -461,8 +478,8 @@ function App() {
     } else {
       nextDate.setSeconds(Math.min(59, Math.max(0, numericValue)));
     }
-    const nextDeviceMs = deviceMsForDate(samples, nextDate);
-    if (nextDeviceMs === null) {
+    const nextSample = sampleForDate(samples, nextDate);
+    if (nextSample === null) {
       return;
     }
     setSelectedRange((current) => {
@@ -470,9 +487,17 @@ function App() {
         return current;
       }
       if (boundary === "start") {
-        return { ...current, startDeviceMs: Math.min(nextDeviceMs, current.endDeviceMs - 1) };
+        return {
+          ...current,
+          startDeviceMs: Math.min(nextSample.device_ms, current.endDeviceMs - 1),
+          startServerReceivedAt: nextSample.server_received_at,
+        };
       }
-      return { ...current, endDeviceMs: Math.max(nextDeviceMs, current.startDeviceMs + 1) };
+      return {
+        ...current,
+        endDeviceMs: Math.max(nextSample.device_ms, current.startDeviceMs + 1),
+        endServerReceivedAt: nextSample.server_received_at,
+      };
     });
   }
 

@@ -86,6 +86,8 @@ class Event(Base):
   severity = Column(Integer, nullable=True)
   start_device_ms = Column(Integer, nullable=False)
   end_device_ms = Column(Integer, nullable=False)
+  start_server_received_at = Column(String, nullable=True)
+  end_server_received_at = Column(String, nullable=True)
   source = Column(String, nullable=False, default="manual")
   notes = Column(Text, nullable=True)
   created_at = Column(String, nullable=False)

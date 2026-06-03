@@ -106,6 +106,10 @@ export function listSessionSamples(
   return requestJson<SessionSample[]>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/samples?${params}`);
 }
 
+function eventPayloadBody(payload: EventPayload): string {
+  return JSON.stringify(payload);
+}
+
 export function listEvents(sessionId: string): Promise<EventLabel[]> {
   const params = new URLSearchParams({ session_id: sessionId });
   return requestJson<EventLabel[]>(`/api/v1/events?${params}`);
@@ -113,7 +117,7 @@ export function listEvents(sessionId: string): Promise<EventLabel[]> {
 
 export function createEvent(payload: EventPayload): Promise<EventLabel> {
   return requestJson<EventLabel>("/api/v1/events", {
-    body: JSON.stringify(payload),
+    body: eventPayloadBody(payload),
     headers: { "Content-Type": "application/json" },
     method: "POST",
   });

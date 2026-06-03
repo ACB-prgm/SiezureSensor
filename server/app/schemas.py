@@ -57,6 +57,8 @@ class EventIn(BaseModel):
   severity: int | None = Field(default=None, ge=1, le=5)
   start_device_ms: int = Field(ge=0)
   end_device_ms: int = Field(ge=0)
+  start_server_received_at: str | None = None
+  end_server_received_at: str | None = None
   source: str = Field(default="manual", min_length=1)
   notes: str | None = None
 
@@ -73,6 +75,8 @@ class EventUpdate(BaseModel):
   severity: int | None = Field(default=None, ge=1, le=5)
   start_device_ms: int | None = Field(default=None, ge=0)
   end_device_ms: int | None = Field(default=None, ge=0)
+  start_server_received_at: str | None = None
+  end_server_received_at: str | None = None
   source: str | None = Field(default=None, min_length=1)
   notes: str | None = None
 

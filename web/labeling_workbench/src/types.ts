@@ -27,6 +27,8 @@ export type EventPayload = {
   severity: number | null;
   start_device_ms: number;
   end_device_ms: number;
+  start_server_received_at?: string | null;
+  end_server_received_at?: string | null;
   source: string;
   notes: string | null;
 };
@@ -80,6 +82,8 @@ export type EventLabel = {
   severity: number | null;
   start_device_ms: number;
   end_device_ms: number;
+  start_server_received_at: string | null;
+  end_server_received_at: string | null;
   source: string;
   notes: string | null;
   created_at: string;
@@ -88,11 +92,15 @@ export type EventLabel = {
 export type SelectionRange = {
   startDeviceMs: number;
   endDeviceMs: number;
+  startServerReceivedAt?: string | null;
+  endServerReceivedAt?: string | null;
 };
 
 export type ViewRange = {
   startDeviceMs: number;
   endDeviceMs: number;
+  startServerReceivedAt?: string | null;
+  endServerReceivedAt?: string | null;
 };
 
 export type ApiRuntimeStatus = {

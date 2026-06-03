@@ -207,6 +207,15 @@ def migrate_imu_samples_table(engine: Engine) -> None:
   add_column_if_missing(engine, "imu_samples", "boot_id", "boot_id VARCHAR")
 
 
+def migrate_events_table(engine: Engine) -> None:
+  inspector = inspect(engine)
+  if "events" not in inspector.get_table_names():
+    return
+
+  add_column_if_missing(engine, "events", "start_server_received_at", "start_server_received_at VARCHAR")
+  add_column_if_missing(engine, "events", "end_server_received_at", "end_server_received_at VARCHAR")
+
+
 def create_index_if_missing(engine: Engine, index_name: str, table_name: str, columns_sql: str) -> None:
   with engine.begin() as connection:
     connection.execute(text(f"CREATE INDEX IF NOT EXISTS {index_name} ON {table_name} ({columns_sql})"))
@@ -223,11 +232,15 @@ def create_query_indexes(engine: Engine) -> None:
     create_index_if_missing(engine, "ix_batches_session_id", "batches", "session_id")
     create_index_if_missing(engine, "ix_batches_session_id_received", "batches", "session_id, server_received_at")
     create_index_if_missing(engine, "ix_batches_id_received", "batches", "id, server_received_at")
+  if "events" in table_names:
+    create_index_if_missing(engine, "ix_events_session_id", "events", "session_id")
+    create_index_if_missing(engine, "ix_events_session_id_server_time", "events", "session_id, start_server_received_at, end_server_received_at")
 
 
 def migrate_existing_db(engine: Engine) -> None:
   migrate_batches_table(engine)
   migrate_imu_samples_table(engine)
+  migrate_events_table(engine)
   create_query_indexes(engine)
 
 

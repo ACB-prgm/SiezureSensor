@@ -23,6 +23,8 @@ def event_to_out(event: Event) -> EventOut:
     severity=event.severity,
     start_device_ms=event.start_device_ms,
     end_device_ms=event.end_device_ms,
+    start_server_received_at=event.start_server_received_at,
+    end_server_received_at=event.end_server_received_at,
     source=event.source,
     notes=event.notes,
     created_at=event.created_at,
@@ -34,13 +36,23 @@ def has_overlapping_event(
   session_id: str,
   start_device_ms: int,
   end_device_ms: int,
+  start_server_received_at: str | None = None,
+  end_server_received_at: str | None = None,
   exclude_event_id: int | None = None,
 ) -> bool:
-  query = db.query(Event).filter(
-    Event.session_id == session_id,
-    Event.start_device_ms < end_device_ms,
-    Event.end_device_ms > start_device_ms,
-  )
+  query = db.query(Event).filter(Event.session_id == session_id)
+  if start_server_received_at is not None and end_server_received_at is not None:
+    query = query.filter(
+      Event.start_server_received_at.isnot(None),
+      Event.end_server_received_at.isnot(None),
+      Event.start_server_received_at < end_server_received_at,
+      Event.end_server_received_at > start_server_received_at,
+    )
+  else:
+    query = query.filter(
+      Event.start_device_ms < end_device_ms,
+      Event.end_device_ms > start_device_ms,
+    )
   if exclude_event_id is not None:
     query = query.filter(Event.id != exclude_event_id)
   return bool(db.query(query.exists()).scalar())
@@ -53,7 +65,14 @@ def create_event(payload: EventIn, db: OrmSession = Depends(get_db)) -> EventOut
       status_code=status.HTTP_404_NOT_FOUND,
       detail="Session not found",
     )
-  if has_overlapping_event(db, payload.session_id, payload.start_device_ms, payload.end_device_ms):
+  if has_overlapping_event(
+    db,
+    payload.session_id,
+    payload.start_device_ms,
+    payload.end_device_ms,
+    payload.start_server_received_at,
+    payload.end_server_received_at,
+  ):
     raise HTTPException(
       status_code=status.HTTP_409_CONFLICT,
       detail="Event overlaps an existing label",
@@ -65,6 +84,8 @@ def create_event(payload: EventIn, db: OrmSession = Depends(get_db)) -> EventOut
     severity=payload.severity,
     start_device_ms=payload.start_device_ms,
     end_device_ms=payload.end_device_ms,
+    start_server_received_at=payload.start_server_received_at,
+    end_server_received_at=payload.end_server_received_at,
     source=payload.source,
     notes=payload.notes,
     created_at=now_iso(),
@@ -121,7 +142,20 @@ def update_event(event_id: int, payload: EventUpdate, db: OrmSession = Depends(g
       status_code=422,
       detail="start_device_ms must be less than end_device_ms",
     )
-  if has_overlapping_event(db, next_session_id, next_start_device_ms, next_end_device_ms, exclude_event_id=event_id):
+  next_start_server_received_at = None
+  next_end_server_received_at = None
+  if "start_server_received_at" in payload.model_fields_set and "end_server_received_at" in payload.model_fields_set:
+    next_start_server_received_at = payload.start_server_received_at
+    next_end_server_received_at = payload.end_server_received_at
+  if has_overlapping_event(
+    db,
+    next_session_id,
+    next_start_device_ms,
+    next_end_device_ms,
+    next_start_server_received_at,
+    next_end_server_received_at,
+    exclude_event_id=event_id,
+  ):
     raise HTTPException(
       status_code=status.HTTP_409_CONFLICT,
       detail="Event overlaps an existing label",
@@ -134,6 +168,10 @@ def update_event(event_id: int, payload: EventUpdate, db: OrmSession = Depends(g
     event.severity = payload.severity
   event.start_device_ms = next_start_device_ms
   event.end_device_ms = next_end_device_ms
+  if "start_server_received_at" in payload.model_fields_set:
+    event.start_server_received_at = payload.start_server_received_at
+  if "end_server_received_at" in payload.model_fields_set:
+    event.end_server_received_at = payload.end_server_received_at
   if payload.source is not None:
     event.source = payload.source
   if "notes" in payload.model_fields_set:
