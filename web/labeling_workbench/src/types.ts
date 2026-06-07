@@ -1,15 +1,6 @@
-export type EventType =
-  | "seizure"
-  | "sleep_twitch"
-  | "scratching"
-  | "scooting"
-  | "shake_off"
-  | "walking"
-  | "running"
-  | "resting"
-  | "unknown";
+export type EventType = string;
 
-export const EVENT_TYPES: EventType[] = [
+export const EVENT_TYPES: string[] = [
   "seizure",
   "sleep_twitch",
   "scratching",
@@ -87,6 +78,17 @@ export type EventLabel = {
   source: string;
   notes: string | null;
   created_at: string;
+};
+
+export type SessionSampleWindow = {
+  samples: SessionSample[];
+  total_sample_count: number;
+  window_start_index: number | null;
+  window_end_index: number | null;
+  window_start_server_received_at: string | null;
+  window_end_server_received_at: string | null;
+  window_start_device_ms: number | null;
+  window_end_device_ms: number | null;
 };
 
 export type SelectionRange = {

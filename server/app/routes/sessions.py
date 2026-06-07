@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session as OrmSession
 
 from app.database import get_db
 from app.models import ActiveDeviceSession, Batch, Device, Event, IMUSample, Session
-from app.schemas import SessionCreateIn, SessionSampleOut, SessionSummaryOut
+from app.schemas import SessionCreateIn, SessionSampleOut, SessionSampleWindowOut, SessionSummaryOut
 from app.session_assignment import set_active_session
 
 
@@ -36,6 +36,32 @@ def sample_to_out(sample: IMUSample) -> SessionSampleOut:
     gz=sample.gz,
     accel_mag=sqrt(sample.ax**2 + sample.ay**2 + sample.az**2),
     gyro_mag=sqrt(sample.gx**2 + sample.gy**2 + sample.gz**2),
+  )
+
+
+def sample_window_to_out(db: OrmSession, session_id: str, samples: list[IMUSample]) -> SessionSampleWindowOut:
+  total_sample_count = db.query(func.count(IMUSample.id)).filter(IMUSample.session_id == session_id).scalar() or 0
+  if not samples:
+    return SessionSampleWindowOut(samples=[], total_sample_count=total_sample_count)
+
+  first_sample = samples[0]
+  last_sample = samples[-1]
+  window_start_index = (
+    db.query(func.count(IMUSample.id))
+    .filter(IMUSample.session_id == session_id, IMUSample.id < first_sample.id)
+    .scalar()
+    or 0
+  )
+  window_end_index = window_start_index + len(samples) - 1
+  return SessionSampleWindowOut(
+    samples=[sample_to_out(sample) for sample in samples],
+    total_sample_count=total_sample_count,
+    window_start_index=window_start_index,
+    window_end_index=window_end_index,
+    window_start_server_received_at=first_sample.server_received_at,
+    window_end_server_received_at=last_sample.server_received_at,
+    window_start_device_ms=first_sample.device_ms,
+    window_end_device_ms=last_sample.device_ms,
   )
 
 
@@ -143,6 +169,8 @@ def list_session_samples(
   session_id: str,
   start_device_ms: int | None = Query(default=None, ge=0),
   end_device_ms: int | None = Query(default=None, ge=0),
+  start_server_received_at: str | None = None,
+  end_server_received_at: str | None = None,
   max_points: int = Query(default=2000, ge=1, le=20000),
   db: OrmSession = Depends(get_db),
 ) -> list[SessionSampleOut]:
@@ -163,8 +191,12 @@ def list_session_samples(
     query = query.filter(IMUSample.device_ms >= start_device_ms)
   if end_device_ms is not None:
     query = query.filter(IMUSample.device_ms <= end_device_ms)
+  if start_server_received_at is not None:
+    query = query.filter(IMUSample.server_received_at >= start_server_received_at)
+  if end_server_received_at is not None:
+    query = query.filter(IMUSample.server_received_at <= end_server_received_at)
 
-  if start_device_ms is None and end_device_ms is None:
+  if start_device_ms is None and end_device_ms is None and start_server_received_at is None and end_server_received_at is None:
     total_samples = (
       db.query(func.coalesce(func.sum(Batch.sample_count), 0))
       .filter(Batch.session_id == session_id)
@@ -210,3 +242,53 @@ def list_session_samples(
     samples = query.order_by(IMUSample.id).all()
 
   return [sample_to_out(sample) for sample in samples]
+
+
+@router.get("/{session_id}/sample-window", response_model=SessionSampleWindowOut)
+def get_session_sample_window(
+  session_id: str,
+  start_device_ms: int | None = Query(default=None, ge=0),
+  end_device_ms: int | None = Query(default=None, ge=0),
+  start_server_received_at: str | None = None,
+  end_server_received_at: str | None = None,
+  max_points: int = Query(default=20000, ge=1, le=20000),
+  db: OrmSession = Depends(get_db),
+) -> SessionSampleWindowOut:
+  if start_device_ms is not None and end_device_ms is not None and start_device_ms > end_device_ms:
+    raise HTTPException(
+      status_code=status.HTTP_400_BAD_REQUEST,
+      detail="start_device_ms must be less than or equal to end_device_ms",
+    )
+  if start_server_received_at is not None and end_server_received_at is not None and start_server_received_at > end_server_received_at:
+    raise HTTPException(
+      status_code=status.HTTP_400_BAD_REQUEST,
+      detail="start_server_received_at must be less than or equal to end_server_received_at",
+    )
+  if db.get(Session, session_id) is None:
+    raise HTTPException(
+      status_code=status.HTTP_404_NOT_FOUND,
+      detail="Session not found",
+    )
+
+  query = db.query(IMUSample).filter(IMUSample.session_id == session_id)
+  if start_device_ms is not None:
+    query = query.filter(IMUSample.device_ms >= start_device_ms)
+  if end_device_ms is not None:
+    query = query.filter(IMUSample.device_ms <= end_device_ms)
+  if start_server_received_at is not None:
+    query = query.filter(IMUSample.server_received_at >= start_server_received_at)
+  if end_server_received_at is not None:
+    query = query.filter(IMUSample.server_received_at <= end_server_received_at)
+
+  use_tail_order = (
+    start_device_ms is None
+    and start_server_received_at is None
+    and (end_device_ms is not None or end_server_received_at is not None or (end_device_ms is None and end_server_received_at is None))
+  )
+  if use_tail_order:
+    samples = query.order_by(IMUSample.id.desc()).limit(max_points).all()
+    samples = sorted(samples, key=lambda sample: sample.id)
+  else:
+    samples = query.order_by(IMUSample.id).limit(max_points).all()
+
+  return sample_window_to_out(db, session_id, samples)

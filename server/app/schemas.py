@@ -1,9 +1,10 @@
+import re
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
-EventType = Literal[
+DEFAULT_EVENT_TYPES = [
   "seizure",
   "sleep_twitch",
   "scratching",
@@ -14,6 +15,21 @@ EventType = Literal[
   "resting",
   "unknown",
 ]
+EventType = str
+
+
+def normalize_event_type(value: object) -> str:
+  if not isinstance(value, str):
+    raise ValueError("event_type must be a string")
+  normalized = value.strip().lower()
+  normalized = re.sub(r"[\s-]+", "_", normalized)
+  normalized = re.sub(r"[^a-z0-9_]", "", normalized)
+  normalized = re.sub(r"_+", "_", normalized).strip("_")
+  if not normalized:
+    raise ValueError("event_type must include at least one letter or number")
+  if len(normalized) > 64:
+    raise ValueError("event_type must be 64 characters or fewer")
+  return normalized
 
 
 class IMUSampleIn(BaseModel):
@@ -70,6 +86,11 @@ class EventIn(BaseModel):
   source: str = Field(default="manual", min_length=1)
   notes: str | None = None
 
+  @field_validator("event_type", mode="before")
+  @classmethod
+  def normalize_event_type_field(cls, value: object) -> str:
+    return normalize_event_type(value)
+
   @model_validator(mode="after")
   def validate_time_window(self) -> "EventIn":
     if self.start_device_ms >= self.end_device_ms:
@@ -87,6 +108,13 @@ class EventUpdate(BaseModel):
   end_server_received_at: str | None = None
   source: str | None = Field(default=None, min_length=1)
   notes: str | None = None
+
+  @field_validator("event_type", mode="before")
+  @classmethod
+  def normalize_event_type_field(cls, value: object) -> str | None:
+    if value is None:
+      return None
+    return normalize_event_type(value)
 
 
 class EventOut(EventIn):
@@ -175,3 +203,14 @@ class SessionSampleOut(BaseModel):
   gz: float
   accel_mag: float
   gyro_mag: float
+
+
+class SessionSampleWindowOut(BaseModel):
+  samples: list[SessionSampleOut]
+  total_sample_count: int
+  window_start_index: int | None = None
+  window_end_index: int | None = None
+  window_start_server_received_at: str | None = None
+  window_end_server_received_at: str | None = None
+  window_start_device_ms: int | None = None
+  window_end_device_ms: int | None = None

@@ -78,6 +78,42 @@ def test_list_session_samples_downsamples_to_max_points(client):
   assert body[0]["device_ms"] == 1000
 
 
+def test_session_sample_window_defaults_to_latest_points_with_metadata(client):
+  insert_batch(client, "session-a", 1, device_ms_start=1000)
+  insert_batch(client, "session-a", 2, device_ms_start=1040)
+
+  response = client.get("/api/v1/sessions/session-a/sample-window", params={"max_points": 2})
+
+  assert response.status_code == 200
+  body = response.json()
+  assert body["total_sample_count"] == 4
+  assert body["window_start_index"] == 2
+  assert body["window_end_index"] == 3
+  assert [sample["device_ms"] for sample in body["samples"]] == [1040, 1060]
+
+
+def test_session_sample_window_filters_by_server_time(client, db_session):
+  insert_batch(client, "session-a", 1, device_ms_start=1000)
+  insert_batch(client, "session-a", 2, device_ms_start=1040)
+  first_batch_received_at = (
+    db_session.query(IMUSample.server_received_at)
+    .filter(IMUSample.session_id == "session-a")
+    .order_by(IMUSample.id)
+    .first()[0]
+  )
+
+  response = client.get(
+    "/api/v1/sessions/session-a/sample-window",
+    params={"end_server_received_at": first_batch_received_at, "max_points": 20},
+  )
+
+  assert response.status_code == 200
+  body = response.json()
+  assert body["total_sample_count"] == 4
+  assert body["window_start_index"] == 0
+  assert [sample["device_ms"] for sample in body["samples"]] == [1000, 1020]
+
+
 def test_list_session_samples_missing_session_returns_404(client):
   response = client.get("/api/v1/sessions/missing/samples")
 

@@ -48,11 +48,22 @@ def test_valid_event_creation_succeeds(client, db_session):
 def test_invalid_event_type_rejected(client):
   create_session(client)
   payload = valid_event_payload()
-  payload["event_type"] = "not_allowed"
+  payload["event_type"] = "!!!"
 
   response = client.post("/api/v1/events", json=payload)
 
   assert response.status_code == 422
+
+
+def test_custom_event_type_is_normalized_and_allowed(client):
+  create_session(client)
+  payload = valid_event_payload()
+  payload["event_type"] = "Paw Licking"
+
+  response = client.post("/api/v1/events", json=payload)
+
+  assert response.status_code == 201
+  assert response.json()["event_type"] == "paw_licking"
 
 
 def test_end_before_start_rejected(client):
@@ -173,7 +184,7 @@ def test_patch_event_rejects_invalid_payloads(client):
   create_session(client)
   created = client.post("/api/v1/events", json=valid_event_payload()).json()
 
-  invalid_type = client.patch(f"/api/v1/events/{created['id']}", json={"event_type": "bad_type"})
+  invalid_type = client.patch(f"/api/v1/events/{created['id']}", json={"event_type": "!!!"})
   invalid_severity = client.patch(f"/api/v1/events/{created['id']}", json={"severity": 6})
   invalid_range = client.patch(
     f"/api/v1/events/{created['id']}",
@@ -185,6 +196,16 @@ def test_patch_event_rejects_invalid_payloads(client):
   assert invalid_severity.status_code == 422
   assert invalid_range.status_code == 422
   assert missing_session.status_code == 404
+
+
+def test_patch_event_accepts_custom_event_type(client):
+  create_session(client)
+  created = client.post("/api/v1/events", json=valid_event_payload()).json()
+
+  response = client.patch(f"/api/v1/events/{created['id']}", json={"event_type": "Seizure Candidate"})
+
+  assert response.status_code == 200
+  assert response.json()["event_type"] == "seizure_candidate"
 
 
 def test_patch_event_rejects_overlap(client):

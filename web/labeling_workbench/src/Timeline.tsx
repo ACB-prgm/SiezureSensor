@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import type { EventLabel, SelectionRange, SessionSample, ViewRange } from "./types";
+import type { EventLabel, SelectionRange, SessionSample, SessionSampleWindow, ViewRange } from "./types";
 
 type TimelineProps = {
   samples: SessionSample[];
@@ -9,8 +9,11 @@ type TimelineProps = {
   selectedRange: SelectionRange | null;
   focusRange: ViewRange | null;
   selectedLabelId: number | null;
+  sampleWindow: SessionSampleWindow | null;
   onRangeSelected: (range: SelectionRange) => void;
   onSelectedRangeChange: (range: SelectionRange) => void;
+  onRequestOlderWindow: () => void;
+  onRequestNewerWindow: () => void;
 };
 
 type Lane = {
@@ -63,7 +66,7 @@ const WIDTH = 1200;
 const LANE_HEIGHT = 132;
 const LEFT_PAD = 86;
 const RIGHT_PAD = 22;
-const TOP_PAD = 20;
+const TOP_PAD = 38;
 const BOTTOM_PAD = 44;
 const HEIGHT = TOP_PAD + BOTTOM_PAD + LANES.length * LANE_HEIGHT;
 const MIN_SPAN_MS = 1000;
@@ -208,8 +211,11 @@ function Timeline({
   isSelectionMode,
   onRangeSelected,
   onSelectedRangeChange,
+  onRequestOlderWindow,
+  onRequestNewerWindow,
   selectedLabelId,
   selectedRange,
+  sampleWindow,
   focusRange,
 }: TimelineProps) {
   const svgRef = useRef<SVGSVGElement | null>(null);
@@ -222,6 +228,7 @@ function Timeline({
   const [selectionTimeDraft, setSelectionTimeDraft] = useState<[number, number] | null>(null);
   const [signalScale, setSignalScale] = useState(1);
   const lastAppliedFocusKeyRef = useRef<string | null>(null);
+  const lastWindowRequestKeyRef = useRef<string | null>(null);
 
   const timelineSamples = useMemo(
     () =>
@@ -357,9 +364,34 @@ function Timeline({
   const viewPercent = totalSpan > 0 ? (viewSpan / totalSpan) * 100 : 100;
   const horizontalPercent = totalSpan > viewSpan ? ((viewStart - domainStart) / (totalSpan - viewSpan)) * 100 : 0;
   const plotWidth = WIDTH - LEFT_PAD - RIGHT_PAD;
+  const canLoadOlder = (sampleWindow?.window_start_index ?? 0) > 0;
+  const canLoadNewer =
+    sampleWindow?.window_end_index !== null &&
+    sampleWindow?.window_end_index !== undefined &&
+    sampleWindow.window_end_index < sampleWindow.total_sample_count - 1;
+
+  function requestAdjacentWindow(direction: "older" | "newer") {
+    const key = `${direction}:${sampleWindow?.window_start_index ?? "none"}:${sampleWindow?.window_end_index ?? "none"}`;
+    if (lastWindowRequestKeyRef.current === key) {
+      return;
+    }
+    lastWindowRequestKeyRef.current = key;
+    if (direction === "older" && canLoadOlder) {
+      onRequestOlderWindow();
+    }
+    if (direction === "newer" && canLoadNewer) {
+      onRequestNewerWindow();
+    }
+  }
 
   function setClampedViewRange(start: number, end: number) {
     setIsFollowingLatest(false);
+    if (start < domainStart) {
+      requestAdjacentWindow("older");
+    }
+    if (end > domainEnd) {
+      requestAdjacentWindow("newer");
+    }
     setViewRange(clampRange(start, end, domainStart, domainEnd));
   }
 
@@ -497,6 +529,16 @@ function Timeline({
   }
 
   const ticks = Array.from({ length: 6 }, (_, index) => viewStart + (viewSpan * index) / 5);
+  const sampleIndexTicks =
+    sampleWindow?.window_start_index !== null &&
+    sampleWindow?.window_start_index !== undefined &&
+    sampleWindow?.window_end_index !== null &&
+    sampleWindow?.window_end_index !== undefined
+      ? ticks.map((tick) => {
+          const ratio = totalSpan > 0 ? (tick - domainStart) / totalSpan : 0;
+          return Math.round(sampleWindow.window_start_index! + ratio * (sampleWindow.window_end_index! - sampleWindow.window_start_index!)) + 1;
+        })
+      : [];
   const visibleSelection = selectionDraft ?? selectedRange;
   const visibleSelectionTimeRange = selectionTimeDraft ?? (visibleSelection ? selectionTimeRange(visibleSelection, timelineSamples) : null);
 
@@ -508,6 +550,9 @@ function Timeline({
           <span> visible points · view {viewPercent.toFixed(1)}%</span>
         </div>
         <div className="zoom-controls" aria-label="Timeline view controls">
+          <button disabled={!canLoadOlder} type="button" onClick={() => requestAdjacentWindow("older")}>
+            Older
+          </button>
           <button type="button" onClick={() => zoomAround((viewStart + viewEnd) / 2, 1.25)}>
             -
           </button>
@@ -520,6 +565,9 @@ function Timeline({
           </button>
           <button type="button" onClick={jumpToLatest}>
             Latest
+          </button>
+          <button disabled={!canLoadNewer} type="button" onClick={() => requestAdjacentWindow("newer")}>
+            Newer
           </button>
         </div>
       </div>
@@ -668,6 +716,16 @@ function Timeline({
         {ticks.map((tick, index) => (
           <g key={tick}>
             <line className="time-grid" x1={xScale(tick)} x2={xScale(tick)} y1={TOP_PAD} y2={HEIGHT - BOTTOM_PAD} />
+            {sampleIndexTicks[index] !== undefined ? (
+              <text
+                className="sample-tick"
+                textAnchor={index === 0 ? "start" : index === ticks.length - 1 ? "end" : "middle"}
+                x={xScale(tick)}
+                y={18}
+              >
+                #{sampleIndexTicks[index].toLocaleString()}
+              </text>
+            ) : null}
             <text
               className="time-tick"
               textAnchor={index === 0 ? "start" : index === ticks.length - 1 ? "end" : "middle"}

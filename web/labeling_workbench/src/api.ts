@@ -7,6 +7,7 @@ import type {
   EventPayload,
   SessionCreatePayload,
   SessionSample,
+  SessionSampleWindow,
   SessionSummary,
 } from "./types";
 
@@ -114,6 +115,31 @@ export function listSessionSamples(
     params.set("end_device_ms", String(Math.round(endDeviceMs)));
   }
   return requestJson<SessionSample[]>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/samples?${params}`);
+}
+
+export type SampleWindowParams = {
+  maxPoints?: number;
+  startDeviceMs?: number;
+  endDeviceMs?: number;
+  startServerReceivedAt?: string;
+  endServerReceivedAt?: string;
+};
+
+export function getSessionSampleWindow(sessionId: string, params: SampleWindowParams = {}): Promise<SessionSampleWindow> {
+  const query = new URLSearchParams({ max_points: String(params.maxPoints ?? 20000) });
+  if (params.startDeviceMs !== undefined) {
+    query.set("start_device_ms", String(Math.round(params.startDeviceMs)));
+  }
+  if (params.endDeviceMs !== undefined) {
+    query.set("end_device_ms", String(Math.round(params.endDeviceMs)));
+  }
+  if (params.startServerReceivedAt !== undefined) {
+    query.set("start_server_received_at", params.startServerReceivedAt);
+  }
+  if (params.endServerReceivedAt !== undefined) {
+    query.set("end_server_received_at", params.endServerReceivedAt);
+  }
+  return requestJson<SessionSampleWindow>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/sample-window?${query}`);
 }
 
 function eventPayloadBody(payload: EventPayload): string {

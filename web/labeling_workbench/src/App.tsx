@@ -9,10 +9,11 @@ import {
   getActiveSession,
   getApiControlStatus,
   getApiRuntimeStatus,
+  getSessionSampleWindow,
   listDeviceBoots,
   listEvents,
-  listSessionSamples,
   listSessions,
+  type SampleWindowParams,
   startApiService,
   stopApiService,
   setActiveSession,
@@ -31,6 +32,7 @@ import {
   type SelectionRange,
   type SessionCreatePayload,
   type SessionSample,
+  type SessionSampleWindow,
   type SessionSummary,
   type ViewRange,
 } from "./types";
@@ -46,6 +48,9 @@ const DEFAULT_FORM: LabelFormState = {
   severity: "",
   notes: "",
 };
+
+const SAMPLE_WINDOW_POINTS = 20000;
+const LABEL_WINDOW_PADDING_MS = 3 * 60 * 1000;
 
 type SessionFormState = {
   sessionId: string;
@@ -85,6 +90,16 @@ function formatClock(value: Date): string {
     minute: "2-digit",
     second: "2-digit",
   });
+}
+
+function normalizeEventType(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_")
+    .replace(/[^a-z0-9_]/g, "")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "");
 }
 
 function formatOptionalNumber(value: number | null | undefined, suffix = ""): string {
@@ -183,6 +198,25 @@ function rangeAroundLabel(label: EventLabel): ViewRange {
   };
 }
 
+function sampleWindowParamsAroundLabel(label: EventLabel): SampleWindowParams {
+  if (label.start_server_received_at && label.end_server_received_at) {
+    const startMs = new Date(label.start_server_received_at).getTime();
+    const endMs = new Date(label.end_server_received_at).getTime();
+    if (Number.isFinite(startMs) && Number.isFinite(endMs)) {
+      return {
+        maxPoints: SAMPLE_WINDOW_POINTS,
+        startServerReceivedAt: new Date(Math.max(0, Math.min(startMs, endMs) - LABEL_WINDOW_PADDING_MS)).toISOString(),
+        endServerReceivedAt: new Date(Math.max(startMs, endMs) + LABEL_WINDOW_PADDING_MS).toISOString(),
+      };
+    }
+  }
+  return {
+    maxPoints: SAMPLE_WINDOW_POINTS,
+    startDeviceMs: Math.max(0, label.start_device_ms - LABEL_WINDOW_PADDING_MS),
+    endDeviceMs: label.end_device_ms + LABEL_WINDOW_PADDING_MS,
+  };
+}
+
 function timePart(value: Date | null, part: "hours" | "minutes" | "seconds"): string {
   if (!value) {
     return "";
@@ -195,6 +229,7 @@ function App() {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [samples, setSamples] = useState<SessionSample[]>([]);
+  const [sampleWindow, setSampleWindow] = useState<SessionSampleWindow | null>(null);
   const [labels, setLabels] = useState<EventLabel[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [timelineError, setTimelineError] = useState<string | null>(null);
@@ -216,8 +251,12 @@ function App() {
   const [editingLabel, setEditingLabel] = useState<EventLabel | null>(null);
   const [form, setForm] = useState<LabelFormState>(DEFAULT_FORM);
   const [sessionForm, setSessionForm] = useState<SessionFormState>(DEFAULT_SESSION_FORM);
+  const [addedEventTypes, setAddedEventTypes] = useState<string[]>([]);
+  const [isAddingEventType, setIsAddingEventType] = useState(false);
+  const [newEventType, setNewEventType] = useState("");
   const lastRuntimeSampleCountRef = useRef<number | null>(null);
   const selectedSessionIdRef = useRef<string | null>(null);
+  const currentSampleWindowParamsRef = useRef<SampleWindowParams>({ maxPoints: SAMPLE_WINDOW_POINTS });
 
   async function refreshActiveSession(deviceId = DEFAULT_SESSION_FORM.deviceId) {
     try {
@@ -248,18 +287,21 @@ function App() {
     }
   }
 
-  async function loadTimeline(sessionId: string, showLoading = true) {
+  async function loadTimeline(sessionId: string, showLoading = true, windowParams: SampleWindowParams = currentSampleWindowParamsRef.current) {
     try {
       if (showLoading) {
         setIsTimelineLoading(true);
       }
-      const [nextSamples, nextLabels] = await Promise.all([
-        listSessionSamples(sessionId, 20000),
+      const nextWindowParams = { maxPoints: SAMPLE_WINDOW_POINTS, ...windowParams };
+      currentSampleWindowParamsRef.current = nextWindowParams;
+      const [nextSampleWindow, nextLabels] = await Promise.all([
+        getSessionSampleWindow(sessionId, nextWindowParams),
         listEvents(sessionId),
       ]);
       const deviceId = sessions.find((session) => session.session_id === sessionId)?.device_id ?? DEFAULT_SESSION_FORM.deviceId;
       const nextBootSummaries = await listDeviceBoots(deviceId, sessionId);
-      setSamples(nextSamples);
+      setSampleWindow(nextSampleWindow);
+      setSamples(nextSampleWindow.samples);
       setLabels(nextLabels);
       setBootSummaries(nextBootSummaries);
       setTimelineError(null);
@@ -335,16 +377,21 @@ function App() {
     const sessionId: string = selectedSessionId ?? "";
     if (!sessionId) {
       setSamples([]);
+      setSampleWindow(null);
       setLabels([]);
       setBootSummaries([]);
       return;
     }
 
-    void loadTimeline(sessionId);
+    currentSampleWindowParamsRef.current = { maxPoints: SAMPLE_WINDOW_POINTS };
+    void loadTimeline(sessionId, true, currentSampleWindowParamsRef.current);
   }, [selectedSessionId]);
 
   const selectedSession = sessions.find((session) => session.session_id === selectedSessionId) ?? null;
   const selectedLabelId = editingLabel?.id ?? null;
+  const eventTypeOptions = Array.from(
+    new Set([...EVENT_TYPES, ...labels.map((label) => label.event_type), ...addedEventTypes, form.eventType].filter(Boolean)),
+  ).sort();
   const selectedStartDate = selectedRange ? dateForDeviceMs(samples, selectedRange.startDeviceMs) : null;
   const selectedEndDate = selectedRange ? dateForDeviceMs(samples, selectedRange.endDeviceMs) : null;
   const latestSampleReceivedAt = apiRuntimeStatus?.latest_sample_received_at ?? null;
@@ -369,10 +416,13 @@ function App() {
     setSelectedRange(null);
     setFocusRange(null);
     setForm(DEFAULT_FORM);
+    setIsAddingEventType(false);
+    setNewEventType("");
     setActionMessage(null);
   }
 
-  function editLabel(label: EventLabel) {
+  async function editLabel(label: EventLabel) {
+    const nextFocusRange = rangeAroundLabel(label);
     setEditingLabel(label);
     setSelectedRange({
       startDeviceMs: label.start_device_ms,
@@ -380,13 +430,18 @@ function App() {
       startServerReceivedAt: label.start_server_received_at,
       endServerReceivedAt: label.end_server_received_at,
     });
-    setFocusRange(rangeAroundLabel(label));
     setForm({
       eventType: label.event_type,
       severity: label.severity === null ? "" : String(label.severity),
       notes: label.notes ?? "",
     });
     setActionMessage(null);
+    if (selectedSessionId) {
+      await loadTimeline(selectedSessionId, true, sampleWindowParamsAroundLabel(label));
+      setFocusRange(nextFocusRange);
+    } else {
+      setFocusRange(nextFocusRange);
+    }
   }
 
   function hasOverlap(range: SelectionRange, excludeEventId: number | null): boolean {
@@ -447,6 +502,31 @@ function App() {
     } catch (caught) {
       setActionMessage(caught instanceof Error ? caught.message : "Failed to save label");
     }
+  }
+
+  function addEventType() {
+    const normalized = normalizeEventType(newEventType);
+    if (!normalized) {
+      setActionMessage("Enter a label type with at least one letter or number.");
+      return;
+    }
+    setAddedEventTypes((current) => (current.includes(normalized) ? current : [...current, normalized]));
+    setForm((current) => ({ ...current, eventType: normalized }));
+    setNewEventType("");
+    setIsAddingEventType(false);
+    setActionMessage(`Added label type ${normalized}.`);
+  }
+
+  async function loadAdjacentSampleWindow(direction: "older" | "newer") {
+    if (!selectedSessionId || samples.length === 0) {
+      return;
+    }
+    const boundarySample = direction === "older" ? samples[0] : samples[samples.length - 1];
+    const params =
+      direction === "older"
+        ? { maxPoints: SAMPLE_WINDOW_POINTS, endServerReceivedAt: boundarySample.server_received_at }
+        : { maxPoints: SAMPLE_WINDOW_POINTS, startServerReceivedAt: boundarySample.server_received_at };
+    await loadTimeline(selectedSessionId, true, params);
   }
 
   async function removeLabel(label: EventLabel) {
@@ -879,6 +959,9 @@ function App() {
                     setActionMessage(null);
                   }}
                   onSelectedRangeChange={setSelectedRange}
+                  onRequestOlderWindow={() => void loadAdjacentSampleWindow("older")}
+                  onRequestNewerWindow={() => void loadAdjacentSampleWindow("newer")}
+                  sampleWindow={sampleWindow}
                   samples={samples}
                   selectedLabelId={selectedLabelId}
                   selectedRange={selectedRange}
@@ -971,13 +1054,40 @@ function App() {
                         value={form.eventType}
                         onChange={(event) => setForm((current) => ({ ...current, eventType: event.target.value as EventType }))}
                       >
-                        {EVENT_TYPES.map((eventType) => (
+                        {eventTypeOptions.map((eventType) => (
                           <option key={eventType} value={eventType}>
                             {eventType}
                           </option>
                         ))}
                       </select>
                     </label>
+                    <div className="event-type-add-panel">
+                      {isAddingEventType ? (
+                        <>
+                          <label>
+                            New type
+                            <input
+                              placeholder="paw licking"
+                              value={newEventType}
+                              onChange={(event) => setNewEventType(event.target.value)}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter") {
+                                  event.preventDefault();
+                                  addEventType();
+                                }
+                              }}
+                            />
+                          </label>
+                          <button className="secondary-button" onClick={addEventType} type="button">
+                            Add
+                          </button>
+                        </>
+                      ) : (
+                        <button className="secondary-button add-type-button" onClick={() => setIsAddingEventType(true)} type="button">
+                          Add type
+                        </button>
+                      )}
+                    </div>
                     <label>
                       Severity
                       <select
