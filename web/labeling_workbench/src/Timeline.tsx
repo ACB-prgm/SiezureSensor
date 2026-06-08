@@ -14,6 +14,7 @@ type TimelineProps = {
   onSelectedRangeChange: (range: SelectionRange) => void;
   onRequestOlderWindow: () => void;
   onRequestNewerWindow: () => void;
+  onRequestLatestWindow: () => void;
 };
 
 type Lane = {
@@ -213,6 +214,7 @@ function Timeline({
   onSelectedRangeChange,
   onRequestOlderWindow,
   onRequestNewerWindow,
+  onRequestLatestWindow,
   selectedLabelId,
   selectedRange,
   sampleWindow,
@@ -423,6 +425,11 @@ function Timeline({
 
   function jumpToLatest() {
     setIsFollowingLatest(true);
+    lastWindowRequestKeyRef.current = null;
+    if (canLoadNewer) {
+      onRequestLatestWindow();
+      return;
+    }
     setViewRange(latestRange([domainStart, domainEnd], viewSpan));
   }
 

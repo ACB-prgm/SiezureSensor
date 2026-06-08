@@ -529,6 +529,14 @@ function App() {
     await loadTimeline(selectedSessionId, true, params);
   }
 
+  async function loadLatestSampleWindow() {
+    if (!selectedSessionId) {
+      return;
+    }
+    setFocusRange(null);
+    await loadTimeline(selectedSessionId, true, { maxPoints: SAMPLE_WINDOW_POINTS });
+  }
+
   async function removeLabel(label: EventLabel) {
     if (!selectedSessionId) {
       return;
@@ -961,6 +969,7 @@ function App() {
                   onSelectedRangeChange={setSelectedRange}
                   onRequestOlderWindow={() => void loadAdjacentSampleWindow("older")}
                   onRequestNewerWindow={() => void loadAdjacentSampleWindow("newer")}
+                  onRequestLatestWindow={() => void loadLatestSampleWindow()}
                   sampleWindow={sampleWindow}
                   samples={samples}
                   selectedLabelId={selectedLabelId}
